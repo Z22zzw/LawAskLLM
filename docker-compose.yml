@@ -1,0 +1,93 @@
+version: "3.9"
+
+services:
+
+  # ── MySQL ──
+  mysql:
+    image: mysql:8.0
+    container_name: law_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-lawllm2026}
+      MYSQL_DATABASE: ${MYSQL_DB:-law_llm}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_PASSWORD:-lawllm2026}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── FastAPI 后端 ──
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: law_backend
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: "3306"
+      PYTHONPATH: /workspace
+    volumes:
+      - ./向量数据库:/workspace/向量数据库
+      - ./data:/workspace/data
+      - ./uploads:/workspace/uploads
+      - ./历史聊天信息存储:/workspace/历史聊天信息存储
+    depends_on:
+      mysql:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  # ── Streamlit（保留旧界面，按需启动）──
+  streamlit:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: law_streamlit
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MYSQL_HOST: mysql
+      PYTHONPATH: /workspace
+    volumes:
+      - ./向量数据库:/workspace/向量数据库
+      - ./data:/workspace/data
+    working_dir: /workspace
+    command: ["python", "-m", "streamlit", "run", "app_chat.py", "--server.port", "8501", "--server.address", "0.0.0.0"]
+    depends_on:
+      mysql:
+        condition: service_healthy
+    profiles: ["streamlit"]
+
+  # ── React 前端 (生产构建) ──
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: law_frontend
+    restart: unless-stopped
+
+  # ── Nginx 反向代理 ──
+  nginx:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: law_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    volumes:
+      # 挂载前端构建产物（由 frontend 容器构建后共享，或使用 volumes）
+      - frontend_dist:/usr/share/nginx/html
+    depends_on:
+      - backend
+      - frontend
+
+volumes:
+  mysql_data:
+  frontend_dist:

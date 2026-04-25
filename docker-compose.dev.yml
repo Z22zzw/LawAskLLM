@@ -1,0 +1,18 @@
+version: "3.9"
+
+# 本地开发：只起 MySQL，前后端分别在本地运行
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: law_mysql_dev
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:-lawllm2026}
+      MYSQL_DATABASE: ${MYSQL_DB:-law_llm}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_dev_data:/var/lib/mysql
+
+volumes:
+  mysql_dev_data:

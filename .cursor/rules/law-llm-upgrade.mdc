@@ -1,0 +1,210 @@
+---
+description: 法律大模型平台全面升级规范：在保留现有 RAG 功能的前提下，对所有新建或修改的界面和组件强制参照 DESIGN.md（Claude/Anthropic 设计风格）进行设计，对未定义或不美观的部分自动完成美化，保证界面干净丰富、跳转逻辑流畅自然。
+alwaysApply: true
+---
+
+# 法律 LLM 平台升级规范
+
+## 一、功能升级原则
+
+1. **保留现有能力**：现有 RAG 检索、法律领域过滤、双数据源、MMR/RRF、Agent 模式、证据标注、会话摘要、实验预设均必须保留，升级只做增量，不做破坏性替换。
+2. **渐进迁移**：`rag_service.py`、`rag_retrieval.py`、`rag_llm.py`、`vector_store_service.py`、`kb_update_service.py` 迁移时保持接口兼容，新增参数用默认值兼容旧调用方。
+3. **参数驱动**：所有检索策略、模型配置、Prompt 模板必须可通过配置修改，禁止硬编码。
+
+---
+
+## 二、设计系统基准（严格参照 DESIGN.md）
+
+### 色彩变量（CSS 变量 / Tailwind 主题 / Streamlit 注入）
+
+```css
+--color-parchment:   #f5f4ed;   /* 页面主背景 */
+--color-ivory:       #faf9f5;   /* 卡片/容器背景 */
+--color-white:       #ffffff;   /* 特定按钮/最高对比 */
+--color-warm-sand:   #e8e6dc;   /* 次要按钮/交互面 */
+--color-dark-surface:#30302e;   /* 深色容器/导航边框 */
+--color-deep-dark:   #141413;   /* 深色主背景/主文字 */
+
+--color-terracotta:  #c96442;   /* 主品牌色：CTA 按钮 */
+--color-coral:       #d97757;   /* 链接/次要强调 */
+--color-error:       #b53333;   /* 错误状态 */
+--color-focus:       #3898ec;   /* 焦点环（唯一冷色）*/
+
+--color-charcoal:    #4d4c48;   /* 浅底深色文字 */
+--color-olive-gray:  #5e5d59;   /* 次要正文 */
+--color-stone-gray:  #87867f;   /* 三级文字/元数据 */
+--color-warm-silver: #b0aea5;   /* 深底浅色文字 */
+
+--color-border-cream:#f0eee6;   /* 标准浅底边框 */
+--color-border-warm: #e8e6dc;   /* 突出边框/分割线 */
+--color-border-dark: #30302e;   /* 深底边框 */
+--color-ring-warm:   #d1cfc5;   /* 按钮 hover/focus 环 */
+```
+
+> 禁止引入任何冷色调灰色（蓝灰、青灰）；所有灰色必须带黄棕底色。
+> 禁止使用传统渐变背景；深度感通过明暗色块交替和 ring shadow 实现。
+
+### 字体
+
+```
+标题：Georgia → 目标替换为 Anthropic Serif，weight 500，仅用于标题层级
+正文/UI：system-ui, Inter, Arial，weight 400–500
+代码：monospace，letter-spacing -0.32px
+```
+
+字体规则：
+- 所有标题用 serif，正文/按钮/标签/导航用 sans
+- 标题 line-height 1.10–1.30；正文 1.60
+- 12px 以下 label 加 letter-spacing 0.12–0.5px
+
+### 间距系统（8px 基础单位）
+
+```
+3 / 4 / 6 / 8 / 10 / 12 / 16 / 20 / 24 / 30 / 40 / 48 / 64 / 80 / 96 px
+```
+
+卡片内边距：24–32px；区块间距：64–96px；按钮 padding：8px 16px 或 0 12px 0 8px（图标按钮）。
+
+### 圆角体系
+
+```
+4px  → 内联元素
+8px  → 标准按钮/卡片
+12px → 主按钮/输入框
+16px → 特色卡片/视频容器
+24px → 标签类元素
+32px → Hero 容器/大卡片
+```
+
+### 阴影（ring-based，非 drop shadow）
+
+```css
+/* 标准交互卡片 */
+box-shadow: 0px 0px 0px 1px var(--color-ring-warm);
+/* 浮起卡片 */
+box-shadow: rgba(0,0,0,0.05) 0px 4px 24px;
+/* 按钮 hover */
+box-shadow: var(--color-warm-sand) 0px 0px 0px 0px, var(--color-ring-warm) 0px 0px 0px 1px;
+```
+
+---
+
+## 三、组件设计规范
+
+### 按钮
+
+| 类型 | 背景 | 文字 | 圆角 | 用途 |
+|------|------|------|------|------|
+| 主 CTA | `#c96442` | `#faf9f5` | 8–12px | 构建、发送、确认 |
+| 次要 | `#e8e6dc` | `#4d4c48` | 8px | 取消、导出、重置 |
+| 白色 | `#ffffff` | `#141413` | 12px | 浅底悬浮操作 |
+| 深色 | `#30302e` | `#faf9f5` | 8px | 深色区块 CTA |
+
+所有按钮：hover 时加 ring shadow，active 时轻微内陷（`inset 0 0 0 1px` at 15% opacity）。
+
+### 卡片/容器
+
+- 浅底：背景 `#faf9f5`，边框 `1px solid #f0eee6`，圆角 8–16px，whisper shadow
+- 深底：背景 `#30302e`，边框 `1px solid #30302e`
+- 列表项分割：仅用顶部 1px 边框，不用完整边框盒
+
+### 输入框/表单
+
+- 背景 `#ffffff`，边框 `1px solid #e8e6dc`，圆角 12px
+- focus：`border-color: #3898ec`，加蓝色 focus ring（唯一冷色出现场景）
+- placeholder：`#87867f`，label：`#5e5d59`，字号 14px
+
+### 导航
+
+- 顶栏：背景 `#f5f4ed` 或 `#141413`（深色主题），粘性定位
+- 导航链接：`#141413` 或 `#5e5d59`，hover 变主色，无下划线
+- 移动端：汉堡菜单折叠
+- 左侧边栏（管理台）：背景 `#faf9f5`，边框右侧 `1px solid #f0eee6`，激活项背景 `#e8e6dc`
+
+### 页面区块
+
+深浅交替创造章节感：
+```
+浅区块：背景 #f5f4ed，标题 #141413，正文 #5e5d59
+深区块：背景 #141413，标题 #faf9f5，正文 #b0aea5，边框 #30302e
+```
+
+---
+
+## 四、自动美化规则
+
+当遇到以下情况时，**无需询问，直接按此规范补全**：
+
+1. **未定义颜色** → 就近从色板选择语义最接近的暖色调变量
+2. **使用纯 `#000` 或 `#fff`** → 替换为 `#141413` 或 `#faf9f5`
+3. **出现蓝灰/冷灰色** → 替换为等明度的暖灰色（见色板）
+4. **使用 box-shadow 投影** → 改为 ring shadow 体系，投影不超过 `rgba(0,0,0,0.05) 0 4px 24px`
+5. **圆角 < 6px 的按钮/卡片** → 提升至 8px
+6. **body line-height < 1.5** → 提升至 1.60
+7. **标题使用 sans-serif** → 改为 Georgia（serif 回退）
+8. **缺少 focus 样式** → 加 `#3898ec` focus ring
+9. **列表/表格缺少视觉层次** → 加行交替背景 `#faf9f5` / `#f5f4ed`
+10. **空白区域不足** → 各 section 顶部最少 64px padding，卡片内至少 24px
+
+---
+
+## 五、页面跳转与交互逻辑
+
+### 全局跳转规则
+
+- 同应用内页面切换：优先 SPA 路由（无整页刷新）
+- 新建资源后：自动跳转到该资源详情页，不停留在列表页
+- 删除资源后：跳回列表页，显示 toast 通知（非阻塞弹窗）
+- 表单提交：loading 态 → 成功 toast → 自动跳转；失败则内联错误，不跳转
+- 耗时操作（文档上传/向量构建）：进入任务状态页或显示进度条，不阻塞界面
+
+### 对话页跳转逻辑
+
+```
+登录 → 对话首页（默认综合领域，上次会话自动恢复）
+  ├─ 新建会话 → 清空对话区，焦点置于输入框
+  ├─ 切换会话 → 加载历史消息（无跳转，就地更新）
+  ├─ 切换知识库/领域 → 不清空当前对话，下一轮生效，侧边栏显示当前配置
+  └─ 发送消息 → 即时展示用户气泡 → loading 态 → 流式渲染 AI 回复 → 引用证据展开
+```
+
+### 管理台跳转逻辑
+
+```
+管理台首页（Dashboard）
+  ├─ 用户管理 → 列表 → 点击行/编辑按钮 → 侧抽屉（不跳页）
+  ├─ 知识库管理 → 列表 → 点击知识库 → 详情页（跳转）
+  │     └─ 上传文档 → 上传 modal → 后台任务 → 状态实时刷新
+  ├─ 向量库管理 → 列表 → 点击重建 → 二次确认 modal → 后台任务
+  └─ 审计日志 → 列表（只读，支持筛选/导出）
+```
+
+### 错误处理
+
+- API 401：自动跳转登录页，带 `redirect` 参数，登录后回到原页
+- API 403：当前页显示"权限不足"提示，不跳出页面
+- API 500：toast 报错，保留当前页面状态，支持重试
+- 网络断开：顶部 banner 提示，输入框禁用，连接恢复后自动恢复
+
+---
+
+## 六、响应式断点
+
+| 断点 | 宽度 | 主要变化 |
+|------|------|---------|
+| Mobile | < 640px | 侧边栏收起为底部 tab；对话区全宽 |
+| Tablet | 640–991px | 侧边栏可折叠抽屉；管理台 2 列 |
+| Desktop | ≥ 992px | 左侧固定侧边栏；对话 + 证据双栏 |
+
+触控目标最小 44×44px；移动端按钮 padding 不低于 12px。
+
+---
+
+## 七、Streamlit 现有页面美化补充
+
+在 `ui_styles.py` / `inject_chat_css` / `inject_kb_css` 中，如果注入的 CSS 与上述规范不符，升级时统一修正：
+
+- Hero 区块背景改为 `linear-gradient` → 改为纯色 `#f5f4ed` 或深色 `#141413`，用边框/字号区分层次
+- 蓝色系按钮 → 改为陶土色 `#c96442`
+- Streamlit 默认 primary color → 在 `st.set_page_config` 后通过 CSS 覆盖
+- 侧边栏背景 → `#faf9f5`，边框右侧 `1px solid #f0eee6`

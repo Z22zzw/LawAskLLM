@@ -1,0 +1,131 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * { box-sizing: border-box; }
+
+  body {
+    background-color: #f5f4ed;
+    color: #141413;
+    font-family: Inter, system-ui, Arial, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: Georgia, serif;
+    font-weight: 500;
+    line-height: 1.20;
+    color: #141413;
+  }
+
+  :focus-visible { outline: 2px solid #c96442; outline-offset: 2px; }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: #f5f4ed; }
+  ::-webkit-scrollbar-thumb { background: #d1cfc5; border-radius: 9999px; }
+}
+
+@layer components {
+  /* ── 按钮 ── */
+  .btn {
+    @apply inline-flex items-center gap-2 font-sans text-sm font-medium
+           transition-all duration-150 select-none cursor-pointer;
+  }
+  .btn-primary {
+    @apply btn bg-terracotta text-ivory px-4 py-2 rounded-md
+           hover:bg-[#b5582e] shadow-ring;
+  }
+  .btn-secondary {
+    @apply btn bg-warm-sand text-charcoal-warm px-4 py-2 rounded
+           hover:bg-border-warm shadow-ring;
+  }
+  .btn-ghost {
+    @apply btn text-olive-gray px-3 py-1.5 rounded hover:bg-warm-sand;
+  }
+  .btn-danger {
+    @apply btn bg-error-crimson text-ivory px-4 py-2 rounded-md
+           hover:bg-[#9a2b2b] shadow-ring;
+  }
+  .btn:disabled { @apply opacity-50 cursor-not-allowed; }
+
+  /* ── 卡片 ── */
+  .card {
+    @apply bg-ivory border border-border-cream rounded-lg shadow-whisper;
+  }
+
+  /* ── 输入框 ── */
+  .input {
+    @apply w-full bg-white border border-border-warm rounded-md px-3 py-2
+           text-sm text-deep-dark placeholder-stone-gray
+           focus:outline-none focus:border-terracotta focus:ring-1 focus:ring-[rgba(201,100,66,0.22)]
+           transition-colors;
+  }
+
+  /* ── Badge ── */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-xl text-xs font-medium;
+  }
+  .badge-warm { @apply badge bg-warm-sand text-charcoal-warm; }
+  .badge-terra { @apply badge bg-terracotta/10 text-terracotta; }
+  .badge-green { @apply badge bg-emerald-50 text-emerald-700; }
+  .badge-red   { @apply badge bg-red-50 text-error-crimson; }
+
+  /* ── 侧边栏导航项 ── */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium
+           text-olive-gray hover:bg-warm-sand hover:text-deep-dark
+           transition-colors cursor-pointer;
+  }
+  .nav-item.active {
+    @apply bg-warm-sand text-deep-dark;
+  }
+
+  /* ── 证据卡片 ── */
+  .citation-card {
+    @apply border border-border-cream rounded-md p-3 bg-ivory text-sm;
+  }
+
+  /* ── 消息气泡 ── */
+  .bubble-user {
+    @apply bg-terracotta text-ivory rounded-2xl rounded-br-sm px-4 py-3 max-w-[80%];
+  }
+  .bubble-ai {
+    @apply bg-ivory border border-border-cream rounded-2xl rounded-bl-sm px-4 py-3 max-w-[85%] shadow-whisper;
+  }
+
+  /* ── 分割线 ── */
+  .divider { @apply border-t border-border-cream my-4; }
+
+  /* ── 深色区块 ── */
+  .section-dark {
+    @apply bg-deep-dark text-ivory;
+  }
+  .section-dark h1, .section-dark h2, .section-dark h3 {
+    @apply text-ivory;
+  }
+}
+
+/* Markdown 渲染样式 */
+.prose-law p { margin-bottom: 0.75rem; line-height: 1.7; }
+.prose-law strong { color: #141413; font-weight: 600; }
+.prose-law code {
+  background: #e8e6dc;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: -0.02em;
+}
+.prose-law ul, .prose-law ol { padding-left: 1.5rem; margin-bottom: 0.75rem; }
+.prose-law li { margin-bottom: 0.25rem; }
+.prose-law a { color: #c96442; text-decoration: underline; }
+
+/* SSE 流式光标 */
+.streaming-cursor::after {
+  content: '▋';
+  animation: blink 1s step-end infinite;
+  color: #c96442;
+}
+@keyframes blink { 50% { opacity: 0; } }

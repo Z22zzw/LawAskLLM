@@ -1,0 +1,5 @@
+{
+  "source_mode": "balanced",
+  "use_mmr": true,
+  "use_agent_default": false
+}
