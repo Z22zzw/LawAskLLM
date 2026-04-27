@@ -16,10 +16,16 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import config
-from llm_client import call_llm
+from llm_client import call_llm, call_llm_stream
+from rag_stream_callbacks import answer_streaming_enabled, emit_answer_token, emit_trace_step
 
 
 # ──────────────────────── 关键词兜底规则 ────────────────────────
+
+def _llm_tr(trace: List[str], msg: str) -> None:
+    trace.append(msg)
+    emit_trace_step(msg)
+
 
 _LEGAL_KEYWORDS = (
     "法律", "法规", "条文", "判决", "判处", "裁定", "罪名", "犯罪",
@@ -129,7 +135,7 @@ def llm_intent_route(
         "routed_by": "fallback_keyword",
     }
     if not config.LLM_API_KEY or not q:
-        trace.append("步骤0：LLM 未配置或问题为空，使用关键词回退路由（intent_route:fallback）")
+        _llm_tr(trace, "步骤0：LLM 未配置或问题为空，使用关键词回退路由（intent_route:fallback）")
         return fallback
 
     system_prompt = (
@@ -185,9 +191,10 @@ def llm_intent_route(
 
         reason = str(parsed.get("route_reason") or "").strip()[:120]
 
-        trace.append(
+        _llm_tr(
+            trace,
             f"步骤0：LLM 意图判断 —— intent={intent}，需澄清={needs_clar}，"
-            f"检索查询={sqs}，允许常识={allow_cs}，理由：{reason or '（无）'}（intent_route:llm）"
+            f"检索查询={sqs}，允许常识={allow_cs}，理由：{reason or '（无）'}（intent_route:llm）",
         )
         return {
             "intent": intent,
@@ -199,7 +206,7 @@ def llm_intent_route(
             "routed_by": "llm",
         }
     except Exception:
-        trace.append("步骤0：LLM 意图判断失败，回退到关键词路由（intent_route:fallback）")
+        _llm_tr(trace, "步骤0：LLM 意图判断失败，回退到关键词路由（intent_route:fallback）")
         return fallback
 
 
@@ -236,13 +243,14 @@ def extract_query_keywords(question: str, trace: List[str]) -> Dict[str, Any]:
         qt = (parsed.get("query_type") or "").strip()
         if qt not in ("概念解释", "案例分析", "法条适用", "对比辨析"):
             qt = ""
-        trace.append(
+        _llm_tr(
+            trace,
             f"步骤2：提取关键词完成 —— 具体术语：{specific}；宏观主题：{broad}；"
-            f"问题类型：{qt or '未识别'}（keywords:extracted）"
+            f"问题类型：{qt or '未识别'}（keywords:extracted）",
         )
         return {"specific_terms": specific, "broad_topics": broad, "query_type": qt}
     except Exception:
-        trace.append("步骤2：关键词提取失败，回退到原始语义检索（keywords:fallback）")
+        _llm_tr(trace, "步骤2：关键词提取失败，回退到原始语义检索（keywords:fallback）")
         return _empty_keywords()
 
 
@@ -324,10 +332,10 @@ def score_evidence_relevance(
             if v not in ("strong", "weak", "unrelated"):
                 v = "weak"
             labels.append(v)
-        trace.append(f"步骤5：证据相关性评估完成 —— {labels}（evidence_relevance:llm）")
+        _llm_tr(trace, f"步骤5：证据相关性评估完成 —— {labels}（evidence_relevance:llm）")
         return {"labels": labels, "coverage": _coverage_from_labels(labels), "scored_by": "llm"}
     except Exception:
-        trace.append("步骤5：证据相关性评估失败，使用关键词兜底（evidence_relevance:fallback）")
+        _llm_tr(trace, "步骤5：证据相关性评估失败，使用关键词兜底（evidence_relevance:fallback）")
         labels = _score_by_keyword(question, docs)
         return {"labels": labels, "coverage": _coverage_from_labels(labels), "scored_by": "fallback_keyword"}
 
@@ -352,10 +360,10 @@ def generate_bridge_context(question: str, contexts: List[str], trace: List[str]
     )
     try:
         bridge = call_llm(system_prompt, user_prompt).strip()
-        trace.append("步骤5：证据关系分析完成（bridge:context_generated）")
+        _llm_tr(trace, "步骤5：证据关系分析完成（bridge:context_generated）")
         return bridge
     except Exception:
-        trace.append("步骤5：证据关系分析跳过（bridge:generation_failed）")
+        _llm_tr(trace, "步骤5：证据关系分析跳过（bridge:generation_failed）")
         return ""
 
 
@@ -386,6 +394,12 @@ def answer_non_legal(
         long_block + f"用户问题：{question}\n" + history_block + "请直接用中文回答。"
     )
     try:
+        if answer_streaming_enabled():
+            parts: List[str] = []
+            for piece in call_llm_stream(_NON_LEGAL_SYSTEM_PROMPT, user_prompt):
+                parts.append(piece)
+                emit_answer_token(piece)
+            return "".join(parts)
         return call_llm(_NON_LEGAL_SYSTEM_PROMPT, user_prompt)
     except Exception as e:
         return str(e)

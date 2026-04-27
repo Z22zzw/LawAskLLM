@@ -6,7 +6,7 @@ from app.config import settings
 from app.database import engine, SessionLocal
 from app.models import *  # noqa: F401, F403 — 确保所有模型在 create_all 前导入
 from app.database import Base
-from app.routers import auth, users, chat, knowledge
+from app.routers import auth, users, chat, knowledge, dataset_vector, experiments
 from app.services.auth_service import ensure_default_admin
 
 
@@ -62,6 +62,8 @@ app.include_router(auth.router,      prefix=prefix)
 app.include_router(users.router,     prefix=prefix)
 app.include_router(chat.router,      prefix=prefix)
 app.include_router(knowledge.router, prefix=prefix)
+app.include_router(dataset_vector.router, prefix=prefix)
+app.include_router(experiments.router, prefix=prefix)
 
 
 @app.get("/health")

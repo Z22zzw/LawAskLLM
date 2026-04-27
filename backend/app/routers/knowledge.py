@@ -1,20 +1,113 @@
 from __future__ import annotations
 import shutil
+import threading
+import uuid
+from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict
+
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.database import get_db
+from app.database import SessionLocal, get_db
 from app.deps import get_current_user
 from app.models.knowledge import KnowledgeBase, KnowledgeDoc
 from app.models.user import User
-from app.schemas.knowledge import KbCreate, KbOut, KbUpdate, DocOut, VectorCollectionStats
+from app.schemas.knowledge import (
+    DocOut,
+    KbCreate,
+    KbIndexJobCreate,
+    KbIndexJobStatus,
+    KbOut,
+    KbUpdate,
+    VectorCollectionStats,
+)
 
 router = APIRouter(prefix="/knowledge-bases", tags=["知识库"])
 
 UPLOAD_DIR = settings.VECTOR_DB_DIR.parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+_kb_index_jobs: Dict[str, Dict[str, Any]] = {}
+_kb_index_lock = threading.Lock()
+
+
+def _kb_index_log(job_id: str, msg: str) -> None:
+    with _kb_index_lock:
+        j = _kb_index_jobs.get(job_id)
+        if not j:
+            return
+        j.setdefault("logs", []).append(msg)
+        if len(j["logs"]) > 400:
+            j["logs"] = j["logs"][-300:]
+
+
+def _run_kb_index_job(job_id: str, kb_id: int) -> None:
+    from user_kb_index_service import index_kb_uploaded_documents
+
+    with _kb_index_lock:
+        _kb_index_jobs[job_id]["status"] = "running"
+        _kb_index_jobs[job_id]["logs"] = []
+        _kb_index_jobs[job_id]["error"] = None
+
+    db = SessionLocal()
+    try:
+        kb = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+        if not kb:
+            raise RuntimeError("知识库不存在")
+        docs = db.query(KnowledgeDoc).filter(KnowledgeDoc.kb_id == kb_id).order_by(KnowledgeDoc.id.asc()).all()
+        if not docs:
+            raise RuntimeError("没有可索引的文档，请先上传文件")
+
+        for d in docs:
+            d.status = "indexing"
+            d.error_msg = ""
+            d.chunk_count = 0
+        db.commit()
+
+        rows = [(d.id, d.filename, d.file_type) for d in docs]
+        upload_dir = UPLOAD_DIR / str(kb_id)
+        total, per_doc = index_kb_uploaded_documents(
+            kb.vector_collection,
+            kb.name,
+            upload_dir,
+            rows,
+            log=lambda m: _kb_index_log(job_id, m),
+        )
+
+        for d in docs:
+            cnt = int(per_doc.get(d.id, 0))
+            d.chunk_count = cnt
+            d.status = "indexed" if cnt > 0 else "failed"
+            if cnt == 0:
+                d.error_msg = "无有效文本或文件缺失"
+        kb.updated_at = datetime.utcnow()
+        db.commit()
+
+        with _kb_index_lock:
+            _kb_index_jobs[job_id]["status"] = "done"
+        _kb_index_log(job_id, f"索引完成，共 {total} 个向量块。")
+    except Exception as e:
+        err = str(e)
+        with _kb_index_lock:
+            _kb_index_jobs[job_id]["status"] = "error"
+            _kb_index_jobs[job_id]["error"] = err
+        _kb_index_log(job_id, f"失败：{err}")
+        try:
+            db.rollback()
+            kb2 = db.query(KnowledgeBase).filter(KnowledgeBase.id == kb_id).first()
+            if kb2:
+                for d in db.query(KnowledgeDoc).filter(KnowledgeDoc.kb_id == kb_id).all():
+                    if d.status == "indexing":
+                        d.status = "failed"
+                        d.error_msg = err[:500]
+                kb2.updated_at = datetime.utcnow()
+                db.commit()
+        except Exception:
+            pass
+    finally:
+        db.close()
 
 
 def _kb_or_404(db: Session, kb_id: int) -> KnowledgeBase:
@@ -124,6 +217,32 @@ def delete_document(kb_id: int, doc_id: int, db: Session = Depends(get_db), _: U
         raise HTTPException(status_code=404, detail="文档不存在")
     db.delete(doc)
     db.commit()
+
+
+@router.post("/{kb_id}/index/start", response_model=KbIndexJobCreate)
+def start_kb_vector_index(kb_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    _kb_or_404(db, kb_id)
+    job_id = str(uuid.uuid4())
+    with _kb_index_lock:
+        _kb_index_jobs[job_id] = {"kb_id": kb_id, "status": "pending", "logs": [], "error": None}
+    t = threading.Thread(target=_run_kb_index_job, args=(job_id, kb_id), daemon=True)
+    t.start()
+    return KbIndexJobCreate(job_id=job_id)
+
+
+@router.get("/{kb_id}/index/jobs/{job_id}", response_model=KbIndexJobStatus)
+def kb_index_job_status(kb_id: int, job_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+    _kb_or_404(db, kb_id)
+    with _kb_index_lock:
+        j = _kb_index_jobs.get(job_id)
+    if not j or j.get("kb_id") != kb_id:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return KbIndexJobStatus(
+        job_id=job_id,
+        status=j.get("status", "pending"),
+        logs=list(j.get("logs") or []),
+        error=j.get("error"),
+    )
 
 
 # ── 向量库状态 ──

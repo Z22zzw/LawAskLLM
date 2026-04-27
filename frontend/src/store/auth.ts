@@ -34,6 +34,7 @@ export const useAuthStore = create<AuthState>((set) => ({
   logout: () => {
     localStorage.removeItem('access_token')
     localStorage.removeItem('refresh_token')
+    localStorage.removeItem('lawask_last_chat_session')
     set({ user: null })
     window.location.href = '/login'
   },

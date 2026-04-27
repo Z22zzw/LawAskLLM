@@ -1,0 +1,26 @@
+LawAskLLM 部署备忘（公网 49.235.100.186）
+
+一、宿主机 Nginx（重要）
+- 本机 /etc/nginx/nginx.conf 只 include conf.d/*.conf，不加载 sites-enabled。
+- LawAskLLM 入口：/etc/nginx/conf.d/lawaskllm.conf → 反代到 127.0.0.1:18080（容器 law_nginx）。
+- 若访问 /login 为 404：多半是其它 conf.d 配置在 80 端口抢占了 49.235.100.186；已把 quantdinger 从 80 迁到 9088。
+- 原 quantdinger（Vue）现入口：http://49.235.100.186:9088/ （需相应安全组放行 9088 才从外网访问）。
+- 若出现 502：表示 18080 上 law_nginx 未启动，请在本项目目录执行 docker-compose up -d --build。
+
+二、Docker 端口（与宿主机其它项目隔离）
+- law_nginx：127.0.0.1:18080 → 容器 80
+- law_backend：127.0.0.1:18081 → 容器 8000（调试用；前端经宿主机 Nginx → 18080 → 容器内 /api/）
+- law_mysql：127.0.0.1:13306 → 容器 3306（宿主机 mysql 客户端连 13306）
+
+三、凭据（以你机器上 .env / 数据库为准）
+- 前端登录：首启且无 superadmin 时一般为 admin / Admin@123456
+- MySQL：.env 中 MYSQL_PASSWORD
+- JWT：.env 的 JWT_SECRET_KEY
+- LLM / DashScope：LLM_API_KEY、DASHSCOPE_API_KEY
+
+四、持久运行
+- ./scripts/lawask-up.sh
+- systemd：deploy/lawaskllm.service
+
+五、环境变量
+- 容器内 MYSQL_HOST=mysql；compose 会覆盖 .env 中的 MYSQL_HOST。

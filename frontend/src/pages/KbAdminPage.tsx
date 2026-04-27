@@ -1,7 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, Trash2, Upload, BookOpen, File, RefreshCw } from 'lucide-react'
-import { kbApi } from '../lib/api'
-import { KnowledgeBase, KbDocument, LEGAL_DOMAINS } from '../types'
+import { Plus, Trash2, Upload, BookOpen, File, RefreshCw, ChevronDown, ChevronUp, Loader2 } from 'lucide-react'
+import { kbApi, datasetBuildApi } from '../lib/api'
+import {
+  clearDatasetBuildJob,
+  clearKbIndexJob,
+  getDatasetBuildJobId,
+  getKbIndexJob,
+  persistDatasetBuildJob,
+  persistKbIndexJob,
+} from '../lib/kbBuildStorage'
+import { KnowledgeBase, KbDocument } from '../types'
 import clsx from 'clsx'
 
 const STATUS_MAP: Record<string, { label: string; cls: string }> = {
@@ -21,12 +29,190 @@ export default function KbAdminPage() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
 
+  const [dsOpen, setDsOpen] = useState(false)
+  const [dsOptions, setDsOptions] = useState<{
+    jec_splits: { file: string; label: string; exists: boolean }[]
+    cail_splits: { file: string; label: string; exists: boolean }[]
+    jec_qa_dir: string
+    cail_dir: string
+  } | null>(null)
+  const [jecSelected, setJecSelected] = useState<Record<string, boolean>>({})
+  const [cailSelected, setCailSelected] = useState<Record<string, boolean>>({})
+  const [useJec, setUseJec] = useState(true)
+  const [useCail, setUseCail] = useState(false)
+  const [jecMax, setJecMax] = useState(0)
+  const [cailMax, setCailMax] = useState(0)
+  const [dsRebuild, setDsRebuild] = useState(false)
+  const [dsJobId, setDsJobId] = useState<string | null>(null)
+  const [dsJob, setDsJob] = useState<{ status: string; logs: string[]; total_written: number; error?: string } | null>(null)
+  const [dsStarting, setDsStarting] = useState(false)
+  const [kbIndexJobId, setKbIndexJobId] = useState<string | null>(null)
+  const [kbIndexJob, setKbIndexJob] = useState<{ status: string; logs: string[]; error?: string } | null>(null)
+  const [showDatasetResumeHint, setShowDatasetResumeHint] = useState(false)
+  const [showKbIndexResumeHint, setShowKbIndexResumeHint] = useState(false)
+
   useEffect(() => { loadKbs() }, [])
 
+  // 从其他页面返回时：恢复进行中的「系统训练集」构建任务并继续轮询
+  useEffect(() => {
+    const id = getDatasetBuildJobId()
+    if (!id) return
+    setShowDatasetResumeHint(true)
+    setDsJobId(id)
+    setDsOpen(true)
+    datasetBuildApi.options().then((o) => {
+      setDsOptions(o)
+      const j: Record<string, boolean> = {}
+      o.jec_splits.forEach((s: { file: string; exists: boolean }) => { j[s.file] = s.exists })
+      setJecSelected(j)
+      const c: Record<string, boolean> = {}
+      o.cail_splits.forEach((s: { file: string; exists: boolean }) => { c[s.file] = s.exists })
+      setCailSelected(c)
+    }).catch(() => setDsOptions(null))
+  }, [])
+
+  useEffect(() => {
+    if (!dsOpen || dsOptions) return
+    datasetBuildApi.options().then((o) => {
+      setDsOptions(o)
+      const j: Record<string, boolean> = {}
+      o.jec_splits.forEach((s: { file: string; exists: boolean }) => { j[s.file] = s.exists })
+      setJecSelected(j)
+      const c: Record<string, boolean> = {}
+      o.cail_splits.forEach((s: { file: string; exists: boolean }) => { c[s.file] = s.exists })
+      setCailSelected(c)
+    }).catch(() => setDsOptions(null))
+  }, [dsOpen, dsOptions])
+
+  useEffect(() => {
+    if (!dsJobId) return
+    let cancelled = false
+    let intervalId = 0
+    const tick = async () => {
+      try {
+        const st = await datasetBuildApi.jobStatus(dsJobId)
+        if (cancelled) return
+        setDsJob(st)
+        if (st.status === 'done' || st.status === 'error') {
+          clearDatasetBuildJob()
+          setShowDatasetResumeHint(false)
+          window.clearInterval(intervalId)
+        }
+      } catch {
+        if (!cancelled) {
+          setDsJob(null)
+          clearDatasetBuildJob()
+          setShowDatasetResumeHint(false)
+          window.clearInterval(intervalId)
+        }
+      }
+    }
+    void tick()
+    intervalId = window.setInterval(() => void tick(), 1500)
+    return () => { cancelled = true; window.clearInterval(intervalId) }
+  }, [dsJobId])
+
+  useEffect(() => {
+    if (!active || !kbIndexJobId) return
+    let cancelled = false
+    let intervalId = 0
+    const tick = async () => {
+      try {
+        const st = await kbApi.indexJobStatus(active.id, kbIndexJobId)
+        if (cancelled) return
+        setKbIndexJob(st)
+        if (st.status === 'done' || st.status === 'error') {
+          clearKbIndexJob()
+          setShowKbIndexResumeHint(false)
+          window.clearInterval(intervalId)
+          const d = await kbApi.listDocs(active.id)
+          if (!cancelled) setDocs(d)
+        }
+      } catch {
+        if (!cancelled) {
+          setKbIndexJob(null)
+          clearKbIndexJob()
+          setShowKbIndexResumeHint(false)
+          setKbIndexJobId(null)
+          window.clearInterval(intervalId)
+        }
+      }
+    }
+    void tick()
+    intervalId = window.setInterval(() => void tick(), 1200)
+    return () => { cancelled = true; window.clearInterval(intervalId) }
+  }, [active?.id, kbIndexJobId])
+
+  const startKbVectorIndex = async () => {
+    if (!active) return
+    setKbIndexJob(null)
+    setShowKbIndexResumeHint(false)
+    try {
+      const { job_id } = await kbApi.startIndex(active.id)
+      setKbIndexJobId(job_id)
+      persistKbIndexJob(active.id, job_id)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : '无法启动索引任务')
+    }
+  }
+
+  const startDatasetBuild = async () => {
+    if (!dsOptions) return
+    const datasets: { type: string; splits: string[]; max_items: number | null }[] = []
+    if (useJec) {
+      const splits = dsOptions.jec_splits.filter(s => jecSelected[s.file] && s.exists).map(s => s.file)
+      if (!splits.length) {
+        alert('请至少勾选一个存在的 JEC-QA 文件')
+        return
+      }
+      datasets.push({
+        type: 'jec',
+        splits,
+        max_items: jecMax > 0 ? jecMax : null,
+      })
+    }
+    if (useCail) {
+      const splits = dsOptions.cail_splits.filter(s => cailSelected[s.file] && s.exists).map(s => s.file)
+      if (!splits.length) {
+        alert('请至少勾选一个存在的 CAIL 文件')
+        return
+      }
+      datasets.push({
+        type: 'cail',
+        splits,
+        max_items: cailMax > 0 ? cailMax : null,
+      })
+    }
+    if (!datasets.length) {
+      alert('请启用 JEC-QA 或 CAIL2018 并选择文件')
+      return
+    }
+    setDsStarting(true)
+    setDsJob(null)
+    setShowDatasetResumeHint(false)
+    try {
+      const { job_id } = await datasetBuildApi.run({ rebuild: dsRebuild, datasets })
+      setDsJobId(job_id)
+      persistDatasetBuildJob(job_id)
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : '启动失败')
+    } finally {
+      setDsStarting(false)
+    }
+  }
+
   const loadKbs = async () => {
-    const data = await kbApi.list()
+    const data: KnowledgeBase[] = await kbApi.list()
     setKbs(data)
-    if (data.length && !active) selectKb(data[0])
+    const pendingIdx = getKbIndexJob()
+    if (data.length && pendingIdx?.jobId && data.some((k: KnowledgeBase) => k.id === pendingIdx.kbId)) {
+      const kb = data.find((k: KnowledgeBase) => k.id === pendingIdx.kbId)!
+      setShowKbIndexResumeHint(true)
+      setKbIndexJobId(pendingIdx.jobId)
+      await selectKb(kb)
+      return
+    }
+    if (data.length && !active) await selectKb(data[0])
   }
 
   const selectKb = async (kb: KnowledgeBase) => {
@@ -127,6 +313,112 @@ export default function KbAdminPage() {
 
       {/* ── 文档管理区 ── */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        <div className="border-b border-border-cream bg-parchment px-6 py-3">
+          <button
+            type="button"
+            onClick={() => setDsOpen(v => !v)}
+            className="flex w-full items-center justify-between text-left text-sm font-medium text-deep-dark"
+          >
+            <span className="font-serif">系统训练集向量构建（JEC-QA / CAIL2018）</span>
+            {dsOpen ? <ChevronUp size={16} className="text-stone-gray" /> : <ChevronDown size={16} className="text-stone-gray" />}
+          </button>
+          {dsOpen && (
+            <div className="mt-4 space-y-4 text-sm">
+              {!dsOptions ? (
+                <p className="text-stone-gray">正在加载可选项…</p>
+              ) : (
+                <>
+                  <p className="text-xs text-stone-gray">
+                    写入全局向量库（与对话 RAG 共用）。路径：JEC {dsOptions.jec_qa_dir}；CAIL {dsOptions.cail_dir}
+                  </p>
+                  <label className="flex items-center gap-2 text-olive-gray">
+                    <input type="checkbox" checked={dsRebuild} onChange={e => setDsRebuild(e.target.checked)} className="rounded border-border-warm" />
+                    首次数据集执行前清空全局向量库（等价于全量重建）
+                  </label>
+                  <div className="card px-4 py-3 space-y-2">
+                    <label className="flex items-center gap-2 font-medium text-deep-dark">
+                      <input type="checkbox" checked={useJec} onChange={e => setUseJec(e.target.checked)} />
+                      入库 JEC-QA
+                    </label>
+                    {useJec && (
+                      <div className="ml-6 grid grid-cols-2 gap-2">
+                        {dsOptions.jec_splits.map(s => (
+                          <label key={s.file} className={clsx('flex items-center gap-2 text-xs', !s.exists && 'text-stone-gray line-through')}>
+                            <input
+                              type="checkbox"
+                              disabled={!s.exists}
+                              checked={!!jecSelected[s.file]}
+                              onChange={e => setJecSelected(prev => ({ ...prev, [s.file]: e.target.checked }))}
+                            />
+                            {s.label} ({s.file})
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {useJec && (
+                      <div className="ml-6">
+                        <label className="text-xs text-stone-gray">每个文件最多条数（0=不限制）</label>
+                        <input type="number" min={0} step={500} value={jecMax} onChange={e => setJecMax(Number(e.target.value))} className="input mt-1 max-w-xs text-xs py-1" />
+                      </div>
+                    )}
+                  </div>
+                  <div className="card px-4 py-3 space-y-2">
+                    <label className="flex items-center gap-2 font-medium text-deep-dark">
+                      <input type="checkbox" checked={useCail} onChange={e => setUseCail(e.target.checked)} />
+                      入库 CAIL2018
+                    </label>
+                    {useCail && (
+                      <div className="ml-6 grid grid-cols-3 gap-2">
+                        {dsOptions.cail_splits.map(s => (
+                          <label key={s.file} className={clsx('flex items-center gap-2 text-xs', !s.exists && 'text-stone-gray line-through')}>
+                            <input
+                              type="checkbox"
+                              disabled={!s.exists}
+                              checked={!!cailSelected[s.file]}
+                              onChange={e => setCailSelected(prev => ({ ...prev, [s.file]: e.target.checked }))}
+                            />
+                            {s.label}
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                    {useCail && (
+                      <div className="ml-6">
+                        <label className="text-xs text-stone-gray">每个 split 最多案例数（0=不限制）</label>
+                        <input type="number" min={0} step={1000} value={cailMax} onChange={e => setCailMax(Number(e.target.value))} className="input mt-1 max-w-xs text-xs py-1" />
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={startDatasetBuild}
+                    disabled={dsStarting || (dsJob?.status === 'running')}
+                    className="btn-primary inline-flex items-center gap-2"
+                  >
+                    {(dsStarting || dsJob?.status === 'running') && <Loader2 size={14} className="animate-spin" />}
+                    开始构建
+                  </button>
+                  {dsJob && (
+                    <div className="rounded-lg border border-border-cream bg-ivory p-3 text-xs">
+                      {showDatasetResumeHint && (dsJob.status === 'pending' || dsJob.status === 'running') && (
+                        <p className="mb-2 rounded-md bg-warm-sand/60 px-2 py-1 text-olive-gray border border-border-cream">
+                          已从后台恢复进行中的构建，日志会持续更新。
+                        </p>
+                      )}
+                      <p className="font-medium text-olive-gray mb-1">
+                        任务状态：{dsJob.status}
+                        {typeof dsJob.total_written === 'number' ? ` · 累计写入约 ${dsJob.total_written}` : ''}
+                      </p>
+                      {dsJob.error && <p className="text-error-crimson mb-2">{dsJob.error}</p>}
+                      <pre className="max-h-40 overflow-auto whitespace-pre-wrap text-stone-gray font-mono leading-relaxed">{dsJob.logs.slice(-30).join('\n')}</pre>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
         {active ? (
           <>
             <div className="px-6 py-5 border-b border-border-cream bg-ivory/80">
@@ -139,19 +431,41 @@ export default function KbAdminPage() {
                     <span className="badge-warm">嵌入模型: {active.embed_model}</span>
                   </div>
                 </div>
-                <div className="flex gap-2">
-                  <input ref={fileRef} type="file" multiple className="hidden" onChange={uploadDoc} accept=".pdf,.txt,.md,.docx,.json" />
+                <div className="flex flex-wrap gap-2">
+                  <input ref={fileRef} type="file" multiple className="hidden" onChange={uploadDoc} accept=".pdf,.txt,.md,.json" />
                   <button
+                    type="button"
                     onClick={() => fileRef.current?.click()}
                     disabled={uploading}
                     className="btn-primary"
                   >
                     <Upload size={14} /> {uploading ? '上传中…' : '上传文档'}
                   </button>
-                  <button onClick={() => selectKb(active)} className="btn-secondary">
+                  <button
+                    type="button"
+                    onClick={startKbVectorIndex}
+                    disabled={!docs.length || kbIndexJob?.status === 'running'}
+                    className="btn-secondary inline-flex items-center gap-1.5"
+                  >
+                    {kbIndexJob?.status === 'running' && <Loader2 size={14} className="animate-spin" />}
+                    构建向量库
+                  </button>
+                  <button type="button" onClick={() => selectKb(active)} className="btn-secondary">
                     <RefreshCw size={14} />
                   </button>
                 </div>
+                {kbIndexJob && (
+                  <div className="mt-3 rounded-lg border border-border-cream bg-parchment p-3 text-xs">
+                    {showKbIndexResumeHint && (kbIndexJob.status === 'pending' || kbIndexJob.status === 'running') && (
+                      <p className="mb-2 rounded-md bg-warm-sand/60 px-2 py-1 text-olive-gray border border-border-cream">
+                        已从后台恢复进行中的文档索引，日志会持续更新。
+                      </p>
+                    )}
+                    <p className="font-medium text-olive-gray mb-1">文档索引：{kbIndexJob.status}</p>
+                    {kbIndexJob.error && <p className="text-error-crimson mb-1">{kbIndexJob.error}</p>}
+                    <pre className="max-h-32 overflow-auto whitespace-pre-wrap text-stone-gray font-mono">{kbIndexJob.logs.slice(-20).join('\n')}</pre>
+                  </div>
+                )}
               </div>
             </div>
 

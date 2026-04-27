@@ -1,0 +1,17 @@
+[Unit]
+Description=LawAskLLM (Docker Compose)
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/data/LawAskLLM
+# 使用 v1 或 v2 其一；按本机实际修改 ExecStart/Stop
+ExecStart=/usr/bin/docker-compose up -d --build
+ExecStop=/usr/bin/docker-compose down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

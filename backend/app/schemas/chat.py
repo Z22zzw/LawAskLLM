@@ -33,7 +33,7 @@ class ChatRequest(BaseModel):
     session_uuid: str
     question: str
     legal_domain: str = ""
-    kb_ids: list[int] = []
+    kb_ids: list[int] | None = None
     top_k: int = 6
 
 

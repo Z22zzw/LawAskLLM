@@ -1,6 +1,8 @@
 from __future__ import annotations
-import uuid
 import json
+import queue
+import threading
+import uuid
 from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -9,11 +11,19 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.deps import get_current_user
 from app.models.chat import ChatSession, ChatMessage, MessageCitation
+from app.models.knowledge import KnowledgeBase
 from app.models.user import User
 from app.schemas.chat import SessionCreate, SessionUpdate, SessionOut, ChatRequest, MessageOut, CitationOut
 from app.services import rag_bridge
 
 router = APIRouter(prefix="/chat", tags=["对话"])
+
+
+def _kb_collections_for_ids(db: Session, kb_ids: list[int]) -> list[str]:
+    if not kb_ids:
+        return []
+    rows = db.query(KnowledgeBase).filter(KnowledgeBase.id.in_(kb_ids)).all()
+    return [r.vector_collection for r in rows]
 
 
 def _get_session(db: Session, session_uuid: str, user: User) -> ChatSession:
@@ -99,6 +109,18 @@ def get_citations(message_id: int, db: Session = Depends(get_db), _: User = Depe
 def chat_completion(body: ChatRequest, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     s = _get_session(db, body.session_uuid, user)
 
+    if body.kb_ids is not None:
+        s.kb_ids = list(body.kb_ids)
+        s.updated_at = datetime.utcnow()
+        db.commit()
+        db.refresh(s)
+
+    effective_kb_ids = list(body.kb_ids) if body.kb_ids is not None else list(s.kb_ids or [])
+    runtime_overrides: dict = {}
+    cols = _kb_collections_for_ids(db, effective_kb_ids)
+    if cols:
+        runtime_overrides["user_kb_collections"] = cols
+
     history_msgs = s.messages[-10:]
     chat_history = [
         (history_msgs[i].content, history_msgs[i + 1].content)
@@ -109,20 +131,56 @@ def chat_completion(body: ChatRequest, db: Session = Depends(get_db), user: User
     def event_stream():
         yield _sse("chain_trace", {"step": "正在分析问题意图…"})
 
-        result = rag_bridge.answer(
-            body.question,
-            legal_domain=body.legal_domain or s.legal_domain,
-            chat_history=chat_history,
-            long_term_summary=s.summary,
-            top_k=body.top_k,
-        )
+        q: queue.Queue = queue.Queue()
+        holder: dict = {}
+        err_box: list = []
 
-        for step in result.get("chain_trace") or []:
-            yield _sse("chain_trace", {"step": step})
+        def on_trace(msg: str) -> None:
+            q.put(("trace", msg))
 
-        answer_text = result.get("answer", "")
-        for chunk in _chunk_text(answer_text, 80):
-            yield _sse("answer_chunk", {"content": chunk})
+        def on_token(tok: str) -> None:
+            q.put(("token", tok))
+
+        def worker() -> None:
+            try:
+                holder["result"] = rag_bridge.answer(
+                    body.question,
+                    legal_domain=body.legal_domain or s.legal_domain,
+                    chat_history=chat_history,
+                    long_term_summary=s.summary,
+                    top_k=body.top_k,
+                    runtime_overrides=runtime_overrides or None,
+                    on_stream_trace=on_trace,
+                    on_stream_token=on_token,
+                )
+            except Exception as e:
+                err_box.append(e)
+            finally:
+                q.put(("end", None))
+
+        th = threading.Thread(target=worker, daemon=True)
+        th.start()
+
+        n_stream_chars = 0
+        while True:
+            kind, payload = q.get()
+            if kind == "end":
+                break
+            if kind == "trace":
+                yield _sse("chain_trace", {"step": payload})
+            elif kind == "token":
+                n_stream_chars += len(payload)
+                yield _sse("answer_chunk", {"content": payload})
+
+        if err_box:
+            yield _sse("error", {"detail": str(err_box[0])})
+            return
+
+        result = holder["result"]
+        answer_text = result.get("answer", "") or ""
+        if n_stream_chars < len(answer_text):
+            for chunk in _chunk_text(answer_text[n_stream_chars:], 80):
+                yield _sse("answer_chunk", {"content": chunk})
 
         citations_data = []
         raw_cites = result.get("citations") or []
@@ -174,8 +232,26 @@ def chat_completion(body: ChatRequest, db: Session = Depends(get_db), user: User
 
         db.commit()
 
+        rs = result.get("retrieval_summary") or {}
+        intent_route = rs.get("intent_route") or {
+            "intent": result.get("intent", ""),
+            "routed_by": (result.get("intent_info") or {}).get("routed_by", ""),
+            "route_reason": (result.get("intent_info") or {}).get("route_reason", ""),
+            "search_queries": list((result.get("intent_info") or {}).get("search_queries") or []),
+            "needs_clarification": bool((result.get("intent_info") or {}).get("needs_clarification", False)),
+            "allow_common_sense": bool((result.get("intent_info") or {}).get("allow_common_sense", True)),
+        }
+
         yield _sse("citations", {"data": citations_data})
-        yield _sse("done", {"message_id": ai_msg.id, "session_name": s.name})
+        yield _sse(
+            "done",
+            {
+                "message_id": ai_msg.id,
+                "session_name": s.name,
+                "intent": result.get("intent") or intent_route.get("intent", ""),
+                "intent_route": intent_route,
+            },
+        )
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 

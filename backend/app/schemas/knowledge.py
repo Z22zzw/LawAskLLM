@@ -1,6 +1,8 @@
 from __future__ import annotations
 from datetime import datetime
-from pydantic import BaseModel
+from typing import Literal, Optional
+
+from pydantic import BaseModel, Field
 
 
 class KbCreate(BaseModel):
@@ -52,3 +54,14 @@ class VectorCollectionStats(BaseModel):
     vector_count: int
     size_mb: float
     status: str
+
+
+class KbIndexJobCreate(BaseModel):
+    job_id: str
+
+
+class KbIndexJobStatus(BaseModel):
+    job_id: str
+    status: Literal["pending", "running", "done", "error"]
+    logs: list[str] = Field(default_factory=list)
+    error: Optional[str] = None

@@ -10,9 +10,10 @@ DATA_DIR = PROJECT_ROOT / "data"
 
 
 
-# Chroma persistent directory (向量数据库)
-
-VECTOR_DB_DIR = PROJECT_ROOT / "向量数据库"
+# Chroma persistent directory（向量数据库）
+# 若默认目录不可写（权限 / Docker UID），可设置绝对路径指向可写目录，并与 backend 的 LAWASK_VECTOR_DB_DIR 保持一致。
+_VECTOR_OVERRIDE = os.getenv("LAWASK_VECTOR_DB_DIR", "").strip()
+VECTOR_DB_DIR = Path(_VECTOR_OVERRIDE).resolve() if _VECTOR_OVERRIDE else PROJECT_ROOT / "向量数据库"
 
 # Windows 下 chroma.sqlite3 常被「对话页」Streamlit 或其它进程占用，删除目录需重试
 VECTOR_DB_RESET_MAX_ATTEMPTS = max(1, int(os.getenv("VECTOR_DB_RESET_MAX_ATTEMPTS", "20")))
@@ -44,6 +45,8 @@ CAIL_2018_DIR = DATA_DIR / "cail2018" / "cail2018_small_charges" / "cail2018_sma
 DATASET_JEC_QA = "jec-qa"
 
 DATASET_CAIL2018 = "cail2018"
+
+DATASET_USER_KB = "user_kb"
 
 
 

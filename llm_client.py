@@ -3,7 +3,7 @@
 """
 from __future__ import annotations
 
-from typing import List
+from typing import Iterator, List
 
 import config
 
@@ -68,4 +68,63 @@ def call_llm(system_prompt: str, user_prompt: str, temperature: float = 0.2) -> 
 
     raise RuntimeError(
         f"LLM call failed for all candidate models. Last error: {last_error_msg}. Candidates: {candidates}"
+    )
+
+
+def _chunk_content(chunk) -> str:
+    c = getattr(chunk, "content", None)
+    if isinstance(c, str):
+        return c
+    if isinstance(c, list):
+        parts: List[str] = []
+        for block in c:
+            if isinstance(block, dict) and block.get("type") == "text":
+                parts.append(str(block.get("text", "")))
+            elif hasattr(block, "text"):
+                parts.append(str(getattr(block, "text", "") or ""))
+        return "".join(parts)
+    return str(c or "")
+
+
+def call_llm_stream(
+    system_prompt: str,
+    user_prompt: str,
+    temperature: float = 0.2,
+) -> Iterator[str]:
+    """
+    流式调用 OpenAI 兼容接口；按 token/片段产出增量文本（用于 SSE）。
+    与 call_llm 相同的模型回退逻辑。
+    """
+    if not config.LLM_API_KEY:
+        raise RuntimeError("LLM_API_KEY 未配置（OpenAI 兼容接口密钥）。")
+
+    from langchain_core.messages import HumanMessage, SystemMessage
+    from langchain_openai import ChatOpenAI
+
+    last_error_msg = ""
+    candidates = _candidate_models()
+    messages = [SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)]
+    for model in candidates:
+        llm = ChatOpenAI(
+            model=model,
+            base_url=config.LLM_BASE_URL,
+            api_key=config.LLM_API_KEY,
+            temperature=temperature,
+        )
+        try:
+            for chunk in llm.stream(messages):
+                piece = _chunk_content(chunk)
+                if piece:
+                    yield piece
+            return
+        except Exception as e:
+            msg = _sanitize_error(str(e))
+            last_error_msg = msg
+            lowered = msg.lower()
+            if ("404" in lowered) or ("does not exist" in lowered) or ("invalid_request_error" in lowered):
+                continue
+            raise RuntimeError(f"LLM stream failed: {msg}") from e
+
+    raise RuntimeError(
+        f"LLM stream failed for all candidate models. Last error: {last_error_msg}. Candidates: {candidates}"
     )

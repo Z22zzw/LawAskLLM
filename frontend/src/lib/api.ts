@@ -69,6 +69,15 @@ export const kbApi = {
   },
   deleteDoc: (kbId: number, docId: number) => api.delete(`/knowledge-bases/${kbId}/documents/${docId}`),
   vectorStats: () => api.get('/knowledge-bases/vector/stats').then(r => r.data),
+  startIndex: (kbId: number) => api.post(`/knowledge-bases/${kbId}/index/start`).then(r => r.data),
+  indexJobStatus: (kbId: number, jobId: string) =>
+    api.get(`/knowledge-bases/${kbId}/index/jobs/${jobId}`).then(r => r.data),
+}
+
+export const datasetBuildApi = {
+  options: () => api.get('/dataset-build/options').then(r => r.data),
+  run: (body: object) => api.post('/dataset-build/run', body).then(r => r.data),
+  jobStatus: (jobId: string) => api.get(`/dataset-build/jobs/${jobId}`).then(r => r.data),
 }
 
 // ── Users ──
@@ -89,7 +98,7 @@ export function streamCompletion(
     session_uuid: string
     question: string
     legal_domain?: string
-    kb_ids?: number[]
+    kb_ids?: number[] | null
     top_k?: number
   },
   handlers: {
@@ -129,6 +138,8 @@ export function streamCompletion(
           else if (eventLine === 'answer_chunk') handlers.onChunk?.(payload.content)
           else if (eventLine === 'citations') handlers.onCitations?.(payload.data)
           else if (eventLine === 'done') handlers.onDone?.(payload)
+          else if (eventLine === 'error')
+            handlers.onError?.(new Error(String((payload as { detail?: string })?.detail || '对话流式错误')))
         }
       }
     })

@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import config
 from langchain_core.runnables import RunnableBranch, RunnableLambda
 from legal_domain_map import LEGAL_DOMAIN_LABELS, normalize_legal_domain_for_filter
-from llm_client import call_llm
+from llm_client import call_llm, call_llm_stream
 from rag_llm import (
     answer_non_legal,
     build_clarify_reply,
@@ -29,14 +29,23 @@ from rag_llm import (
     summarize_for_memory,
 )
 from rag_prefs import load_rag_prefs
+from rag_stream_callbacks import answer_streaming_enabled, emit_answer_token, emit_trace_step
 from rag_retrieval import (
     clean_evidence_text,
     format_context,
     resolve_source_mode,
     retrieve_documents,
+    retrieve_user_kb_documents,
     retrieve_with_multi_queries,
+    rrf_fuse,
 )
 from vector_store_service import get_chroma_vector_store
+
+
+def _tr_emit(tr: List[str], msg: str) -> None:
+    tr.append(msg)
+    emit_trace_step(msg)
+
 
 __all__ = [
     "answer_question",
@@ -70,7 +79,7 @@ def _history_blocks(
 
 
 def _zero_citation_stats() -> Dict[str, int]:
-    return {"jec_qa": 0, "cail2018": 0, "total": 0}
+    return {"jec_qa": 0, "cail2018": 0, "user_kb": 0, "total": 0}
 
 
 def _make_citation(doc, idx: int) -> Dict[str, Any]:
@@ -94,7 +103,7 @@ def _make_citation(doc, idx: int) -> Dict[str, Any]:
 def _route_classify(state: Dict[str, Any]) -> Dict[str, Any]:
     question = (state.get("question") or "").strip()
     trace = list(state.get("chain_trace") or [])
-    trace.append("步骤1：识别问题意图（chain:intent_route）")
+    _tr_emit(trace, "步骤1：识别问题意图（chain:intent_route）")
 
     source_mode = (state.get("source_mode") or "auto").strip().lower()
     if source_mode not in ("auto", "balanced", "jec_only", "cail_only"):
@@ -118,7 +127,7 @@ def _route_classify(state: Dict[str, Any]) -> Dict[str, Any]:
 
 def _node_empty(state: Dict[str, Any]) -> Dict[str, Any]:
     tr = list(state.get("chain_trace") or [])
-    tr.append("提示：问题为空，请输入内容（chain:empty_question）")
+    _tr_emit(tr, "提示：问题为空，请输入内容（chain:empty_question）")
     return {
         "answer": "请输入你的问题。",
         "citations": [],
@@ -137,10 +146,11 @@ def _node_non_legal_direct(state: Dict[str, Any]) -> Dict[str, Any]:
     intent_info = state.get("intent_info") or {}
     tr = list(state.get("chain_trace") or [])
     reason = intent_info.get("route_reason") or ""
-    tr.append(
+    _tr_emit(
+        tr,
         "步骤2：判定为非法律问题，使用通用助手直接回答（不检索知识库）"
         + (f" — 理由：{reason}" if reason else "")
-        + "（chain:non_legal_direct）"
+        + "（chain:non_legal_direct）",
     )
     answer = answer_non_legal(
         question,
@@ -263,13 +273,13 @@ def _node_legal_rag(state: Dict[str, Any]) -> Dict[str, Any]:
 
     history_block, long_term_block = _history_blocks(chat_history, long_term_summary)
     tr = list(state.get("chain_trace") or [])
-    tr.append("步骤1：判定为法律问题，进入法律RAG检索流程（chain:legal_branch）")
+    _tr_emit(tr, "步骤1：判定为法律问题，进入法律RAG检索流程（chain:legal_branch）")
 
     eff_mode = state.get("resolved_source_mode") or "balanced"
     ld_norm = normalize_legal_domain_for_filter(legal_domain_arg)
 
     if force_direct_llm:
-        tr.append("步骤2：实验模式启用仅LLM直答，跳过知识库检索（chain:force_direct_llm）")
+        _tr_emit(tr, "步骤2：实验模式启用仅LLM直答，跳过知识库检索（chain:force_direct_llm）")
         answer = answer_non_legal(
             question,
             chat_history=chat_history,
@@ -292,7 +302,7 @@ def _node_legal_rag(state: Dict[str, Any]) -> Dict[str, Any]:
 
     # ── 需要澄清：直接引导用户补充信息 ──
     if needs_clar:
-        tr.append("步骤2：问题信息不足，引导用户补充细节（chain:clarify_user）")
+        _tr_emit(tr, "步骤2：问题信息不足，引导用户补充细节（chain:clarify_user）")
         return {
             "answer": build_clarify_reply(question, llm_clar_hints),
             "citations": [],
@@ -309,14 +319,15 @@ def _node_legal_rag(state: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     # ── 关键词抽取（辅助多路检索与重排） ──
-    tr.append("步骤2：提取查询关键词（chain:keyword_extraction）")
+    _tr_emit(tr, "步骤2：提取查询关键词（chain:keyword_extraction）")
     query_keywords = extract_query_keywords(question, tr)
 
     # ── 检索 ──
-    tr.append(
+    _tr_emit(
+        tr,
         "步骤3：在向量知识库中检索相关证据"
         + (f"（LLM 建议查询：{llm_search_queries}）" if llm_search_queries else "")
-        + "（chain:vector_retrieve）"
+        + "（chain:vector_retrieve）",
     )
     try:
         vector_store = get_chroma_vector_store()
@@ -332,8 +343,17 @@ def _node_legal_rag(state: Dict[str, Any]) -> Dict[str, Any]:
             query_keywords,
             tr,
         )
+        user_dirs = [str(x).strip() for x in (state.get("user_kb_collections") or []) if x and str(x).strip()]
+        if user_dirs:
+            try:
+                user_docs = retrieve_user_kb_documents(user_dirs, question, top_k, tr)
+                if user_docs:
+                    retrieved_docs = rrf_fuse([retrieved_docs, user_docs])
+                    retrieved_docs = retrieved_docs[:top_k]
+            except Exception:
+                _tr_emit(tr, "步骤3-a：用户知识库与主库融合失败（user_kb_fuse_error）")
     except Exception as e:
-        tr.append("步骤3：向量库检索失败（chain:retrieve_error）")
+        _tr_emit(tr, "步骤3：向量库检索失败（chain:retrieve_error）")
         return {
             "answer": f"向量库或嵌入初始化失败：{e}",
             "citations": [],
@@ -355,7 +375,7 @@ def _node_legal_rag(state: Dict[str, Any]) -> Dict[str, Any]:
     evidence_labels: List[str] = []
     coverage: str = "none"
     if use_evidence_labels:
-        tr.append("步骤4：评估检索证据相关性（chain:evidence_relevance_score）")
+        _tr_emit(tr, "步骤4：评估检索证据相关性（chain:evidence_relevance_score）")
         relevance = score_evidence_relevance(question, retrieved_docs, tr)
         evidence_labels = list(relevance.get("labels") or [])
         coverage = str(relevance.get("coverage") or "none")
@@ -363,29 +383,37 @@ def _node_legal_rag(state: Dict[str, Any]) -> Dict[str, Any]:
             if idx < len(evidence_labels):
                 c["relevance"] = evidence_labels[idx]
     else:
-        tr.append("步骤4：实验模式关闭证据相关性标注（ablation:no_evidence_label）")
+        _tr_emit(tr, "步骤4：实验模式关闭证据相关性标注（ablation:no_evidence_label）")
         coverage = "partial" if citations else "none"
 
     # ── 桥接摘要（仅在有相关证据时） ──
     bridge_context = ""
     if coverage != "none":
-        tr.append("步骤5：分析多条证据之间的逻辑关系（chain:bridge_context）")
+        _tr_emit(tr, "步骤5：分析多条证据之间的逻辑关系（chain:bridge_context）")
         bridge_context = generate_bridge_context(question, contexts, tr)
 
     # ── 生成 ──
-    tr.append("步骤6：综合证据与通用法律常识，调用大模型生成回答（chain:llm_generate_answer）")
+    _tr_emit(tr, "步骤6：综合证据与通用法律常识，调用大模型生成回答（chain:llm_generate_answer）")
     domain_label = LEGAL_DOMAIN_LABELS.get(ld_norm, ld_norm) if ld_norm else None
     system_prompt = _build_legal_system_prompt(domain_label, coverage, allow_common_sense)
     user_prompt = _build_legal_user_prompt(
         question, history_block, long_term_block, bridge_context, evidence_labels, contexts
     )
     try:
-        answer = call_llm(system_prompt, user_prompt)
+        if answer_streaming_enabled():
+            parts: List[str] = []
+            for piece in call_llm_stream(system_prompt, user_prompt):
+                parts.append(piece)
+                emit_answer_token(piece)
+            answer = "".join(parts)
+        else:
+            answer = call_llm(system_prompt, user_prompt)
     except Exception as e:
         answer = str(e)
 
     jec_n = sum(1 for c in citations if c.get("dataset") == config.DATASET_JEC_QA)
     cail_n = sum(1 for c in citations if c.get("dataset") == config.DATASET_CAIL2018)
+    ukb_n = sum(1 for c in citations if c.get("dataset") == getattr(config, "DATASET_USER_KB", "user_kb"))
 
     return {
         "answer": answer,
@@ -396,7 +424,7 @@ def _node_legal_rag(state: Dict[str, Any]) -> Dict[str, Any]:
         "chain_trace": tr,
         "effective_source_mode": eff_mode,
         "legal_domain": ld_norm,
-        "citation_stats": {"jec_qa": jec_n, "cail2018": cail_n, "total": len(citations)},
+        "citation_stats": {"jec_qa": jec_n, "cail2018": cail_n, "user_kb": ukb_n, "total": len(citations)},
         "intent": "legal",
         "intent_info": intent_info,
         "coverage": coverage,
@@ -525,9 +553,10 @@ def _finalize_rag_ui_result(
     coverage = str(out.get("coverage") or ("none" if not cites else "partial"))
     evidence_labels = list(out.get("evidence_labels") or [])
     search_queries = list(intent_info.get("search_queries") or [])
-    out["answer"] = (out.get("answer") or "").rstrip() + _build_kb_coverage_banner(
-        coverage, evidence_labels, len(cites), search_queries
-    )
+    banner = _build_kb_coverage_banner(coverage, evidence_labels, len(cites), search_queries)
+    out["answer"] = (out.get("answer") or "").rstrip() + banner
+    if answer_streaming_enabled() and banner:
+        emit_answer_token(banner)
 
     out["retrieval_summary"] = _build_retrieval_summary(out, prefs, top_k, elapsed_sec, mode)
     if mode == "agent" and not cites:
@@ -609,6 +638,7 @@ def answer_question(
         "force_direct_llm": force_direct_llm,
         "legal_domain": legal_domain,
         "chain_trace": [],
+        "user_kb_collections": list(prefs.get("user_kb_collections") or []),
     }
     t0 = time.perf_counter()
     out = rag_chain.invoke(state)

@@ -1,10 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { Plus, Send, Trash2, Edit2, Check, X } from 'lucide-react'
-import { chatApi, streamCompletion } from '../lib/api'
-import { Session, Message, Citation, LEGAL_DOMAINS } from '../types'
+import { chatApi, kbApi, streamCompletion } from '../lib/api'
+import { getLastChatSession, setLastChatSession } from '../lib/chatStorage'
+import { Session, Message, Citation, LEGAL_DOMAINS, KnowledgeBase } from '../types'
 import MessageBubble from '../components/chat/MessageBubble'
 import CitationPanel from '../components/chat/CitationPanel'
+import NonLegalReasoningPanel, { IntentRouteInfo } from '../components/chat/NonLegalReasoningPanel'
 import clsx from 'clsx'
+
+interface DonePayload {
+  message_id?: number
+  session_name?: string
+  intent?: string
+  intent_route?: IntentRouteInfo
+}
 
 export default function ChatPage() {
   const [sessions, setSessions] = useState<Session[]>([])
@@ -18,27 +27,52 @@ export default function ChatPage() {
   const [domain, setDomain] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editName, setEditName] = useState('')
+  const [kbs, setKbs] = useState<KnowledgeBase[]>([])
+  const [selectedKbIds, setSelectedKbIds] = useState<number[]>([])
+  const [lastReasoning, setLastReasoning] = useState<{
+    intent: string
+    intent_route: IntentRouteInfo
+    trace: string[]
+  } | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
 
   useEffect(() => { loadSessions() }, [])
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamMsg])
+  useEffect(() => { kbApi.list().then(setKbs).catch(() => setKbs([])) }, [])
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, streamMsg, lastReasoning])
 
   const loadSessions = async () => {
-    const data = await chatApi.listSessions()
+    const data: Session[] = await chatApi.listSessions()
     setSessions(data)
-    if (data.length && !activeId) switchSession(data[0].session_uuid)
+    const last = getLastChatSession()
+    if (last && data.some(s => s.session_uuid === last)) {
+      await switchSession(last, data)
+    } else {
+      setActiveId(null)
+      setMessages([])
+      setStreamMsg('')
+      setStreamCites([])
+      setTrace([])
+      setSelectedKbIds([])
+      setLastReasoning(null)
+    }
   }
 
-  const switchSession = async (uuid: string) => {
+  const switchSession = async (uuid: string, sessionList?: Session[]) => {
+    const list = sessionList ?? sessions
+    setLastChatSession(uuid)
     setActiveId(uuid)
     setStreamMsg('')
     setStreamCites([])
     setTrace([])
+    setLastReasoning(null)
     const msgs = await chatApi.listMessages(uuid)
     setMessages(msgs)
-    const s = sessions.find(s => s.session_uuid === uuid) || (await chatApi.listSessions()).find((s: Session) => s.session_uuid === uuid)
-    if (s) setDomain(s.legal_domain || '')
+    const s = list.find(s => s.session_uuid === uuid) ?? (await chatApi.listSessions()).find((x: Session) => x.session_uuid === uuid)
+    if (s) {
+      setDomain(s.legal_domain || '')
+      setSelectedKbIds(Array.isArray(s.kb_ids) ? s.kb_ids : [])
+    }
   }
 
   const newSession = async () => {
@@ -46,8 +80,11 @@ export default function ChatPage() {
     setSessions(prev => [s, ...prev])
     setMessages([])
     setActiveId(s.session_uuid)
+    setLastChatSession(s.session_uuid)
     setStreamMsg('')
     setStreamCites([])
+    setSelectedKbIds([])
+    setLastReasoning(null)
   }
 
   const deleteSession = async (uuid: string, e: React.MouseEvent) => {
@@ -57,8 +94,12 @@ export default function ChatPage() {
     setSessions(remaining)
     if (activeId === uuid) {
       setMessages([])
-      if (remaining.length) switchSession(remaining[0].session_uuid)
-      else { setActiveId(null) }
+      if (remaining.length) await switchSession(remaining[0].session_uuid, remaining)
+      else {
+        setActiveId(null)
+        setLastChatSession(null)
+        setSelectedKbIds([])
+      }
     }
   }
 
@@ -68,14 +109,36 @@ export default function ChatPage() {
     setEditingId(null)
   }
 
+  const toggleKb = (kbId: number) => {
+    const next = selectedKbIds.includes(kbId)
+      ? selectedKbIds.filter(x => x !== kbId)
+      : [...selectedKbIds, kbId]
+    setSelectedKbIds(next)
+    if (activeId) {
+      chatApi.updateSession(activeId, { kb_ids: next }).catch(() => {})
+      setSessions(prev => prev.map(s => s.session_uuid === activeId ? { ...s, kb_ids: next } : s))
+    }
+  }
+
   const sendMessage = async () => {
-    if (!input.trim() || sending || !activeId) return
+    if (!input.trim() || sending) return
     const q = input.trim()
     setInput('')
     setSending(true)
     setStreamMsg('')
     setStreamCites([])
     setTrace([])
+    setLastReasoning(null)
+    const traceBuffer: string[] = []
+
+    let sessionUuid = activeId
+    if (!sessionUuid) {
+      const s = await chatApi.createSession({ name: '新对话', legal_domain: domain, kb_ids: selectedKbIds })
+      setSessions(prev => [s, ...prev])
+      sessionUuid = s.session_uuid
+      setActiveId(sessionUuid)
+      setLastChatSession(sessionUuid)
+    }
 
     const userMsg: Message = {
       id: Date.now(), role: 'user', content: q,
@@ -85,19 +148,34 @@ export default function ChatPage() {
 
     let fullText = ''
     cancelRef.current = streamCompletion(
-      { session_uuid: activeId, question: q, legal_domain: domain },
       {
-        onTrace: step => setTrace(prev => [...prev, step]),
+        session_uuid: sessionUuid!,
+        question: q,
+        legal_domain: domain,
+        kb_ids: selectedKbIds,
+      },
+      {
+        onTrace: step => {
+          traceBuffer.push(step)
+          setTrace(prev => [...prev, step])
+        },
         onChunk: chunk => { fullText += chunk; setStreamMsg(fullText) },
         onCitations: data => setStreamCites(data as Citation[]),
-        onDone: async (payload) => {
+        onDone: async (payload: DonePayload) => {
           setSending(false)
           setStreamMsg('')
-          const msgs = await chatApi.listMessages(activeId)
+          const msgs = await chatApi.listMessages(sessionUuid!)
           setMessages(msgs)
           setStreamCites([])
           const newSessions = await chatApi.listSessions()
           setSessions(newSessions)
+          if (payload?.intent === 'non_legal') {
+            setLastReasoning({
+              intent: payload.intent,
+              intent_route: payload.intent_route || {},
+              trace: [...traceBuffer],
+            })
+          }
         },
         onError: () => { setSending(false); setStreamMsg('') },
       }
@@ -106,15 +184,14 @@ export default function ChatPage() {
 
   return (
     <div className="flex h-screen">
-      {/* ── 会话列表侧栏 ── */}
       <aside className="w-60 flex flex-col bg-ivory border-r border-border-cream flex-shrink-0">
         <div className="p-3 border-b border-border-cream">
-          <button onClick={newSession} className="btn-secondary w-full justify-center">
+          <button type="button" onClick={newSession} className="btn-secondary w-full justify-center">
             <Plus size={14} /> 新建对话
           </button>
         </div>
 
-        <div className="flex-1 overflow-y-auto py-2">
+        <div className="flex-1 overflow-y-auto py-2 min-h-0">
           {sessions.map(s => (
             <div
               key={s.session_uuid}
@@ -135,15 +212,15 @@ export default function ChatPage() {
                     onKeyDown={e => e.key === 'Enter' && saveRename(s.session_uuid)}
                     autoFocus
                   />
-                  <button onClick={() => saveRename(s.session_uuid)} className="text-terracotta"><Check size={12}/></button>
-                  <button onClick={() => setEditingId(null)} className="text-stone-gray"><X size={12}/></button>
+                  <button type="button" onClick={() => saveRename(s.session_uuid)} className="text-terracotta"><Check size={12}/></button>
+                  <button type="button" onClick={() => setEditingId(null)} className="text-stone-gray"><X size={12}/></button>
                 </div>
               ) : (
                 <>
                   <span className="flex-1 truncate">{s.name}</span>
                   <div className="hidden group-hover:flex items-center gap-0.5">
-                    <button onClick={e => { e.stopPropagation(); setEditingId(s.session_uuid); setEditName(s.name) }} className="p-0.5 hover:text-terracotta"><Edit2 size={11}/></button>
-                    <button onClick={e => deleteSession(s.session_uuid, e)} className="p-0.5 hover:text-error-crimson"><Trash2 size={11}/></button>
+                    <button type="button" onClick={e => { e.stopPropagation(); setEditingId(s.session_uuid); setEditName(s.name) }} className="p-0.5 hover:text-terracotta"><Edit2 size={11}/></button>
+                    <button type="button" onClick={e => deleteSession(s.session_uuid, e)} className="p-0.5 hover:text-error-crimson"><Trash2 size={11}/></button>
                   </div>
                 </>
               )}
@@ -151,24 +228,44 @@ export default function ChatPage() {
           ))}
         </div>
 
-        {/* 领域选择 */}
         <div className="p-3 border-t border-border-cream">
           <label className="text-xs text-stone-gray mb-1 block">法律领域</label>
           <select
             value={domain}
             onChange={e => setDomain(e.target.value)}
-            className="input py-1.5 text-xs"
+            className="input py-1.5 text-xs w-full"
           >
             {LEGAL_DOMAINS.map(d => (
               <option key={d.code} value={d.code}>{d.label}</option>
             ))}
           </select>
         </div>
+
+        <div className="p-3 border-t border-border-cream max-h-40 overflow-y-auto">
+          <p className="text-xs text-stone-gray mb-2">关联知识库</p>
+          {!kbs.length ? (
+            <p className="text-[10px] text-stone-gray">暂无知识库，请先在知识库页创建。</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {kbs.map(kb => (
+                <li key={kb.id}>
+                  <label className="flex items-center gap-2 text-xs text-olive-gray cursor-pointer">
+                    <input
+                      type="checkbox"
+                      className="rounded border-border-warm"
+                      checked={selectedKbIds.includes(kb.id)}
+                      onChange={() => toggleKb(kb.id)}
+                    />
+                    <span className="truncate">{kb.name}</span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </aside>
 
-      {/* ── 对话主区 ── */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* 顶栏 */}
         <div className="px-6 py-4 border-b border-border-cream bg-ivory/80 backdrop-blur">
           <h2 className="font-serif text-lg text-deep-dark">
             {sessions.find(s => s.session_uuid === activeId)?.name || '法律智能问答'}
@@ -178,7 +275,6 @@ export default function ChatPage() {
           </p>
         </div>
 
-        {/* 消息区 */}
         <div className="flex-1 overflow-y-auto px-6 py-4">
           {!messages.length && !streamMsg && (
             <div className="text-center py-16">
@@ -186,7 +282,7 @@ export default function ChatPage() {
               <p className="text-sm text-stone-gray">系统会从知识库中检索相关法律知识，结合大模型生成专业回答</p>
               <div className="flex flex-wrap justify-center gap-2 mt-6">
                 {['合同的撤销条件是什么？', '故意伤害罪与正当防卫如何区分？', '劳动合同解除有哪些法定情形？'].map(q => (
-                  <button key={q} onClick={() => { setInput(q) }} className="btn-secondary text-xs px-3 py-1.5">
+                  <button key={q} type="button" onClick={() => { setInput(q) }} className="btn-secondary text-xs px-3 py-1.5">
                     {q}
                   </button>
                 ))}
@@ -203,6 +299,10 @@ export default function ChatPage() {
             />
           )}
 
+          {lastReasoning?.intent === 'non_legal' && !sending && (
+            <NonLegalReasoningPanel intentRoute={lastReasoning.intent_route} traceSteps={lastReasoning.trace} />
+          )}
+
           {sending && trace.length > 0 && (
             <div className="mb-3 px-4 py-2 rounded-md bg-warm-sand/50 border border-border-cream text-xs text-stone-gray">
               {trace[trace.length - 1]}
@@ -212,7 +312,6 @@ export default function ChatPage() {
           <div ref={bottomRef} />
         </div>
 
-        {/* 输入区 */}
         <div className="px-6 py-4 border-t border-border-cream bg-ivory/80">
           {streamCites.length > 0 && (
             <div className="mb-3 p-3 rounded-md bg-parchment border border-border-cream">
@@ -230,6 +329,7 @@ export default function ChatPage() {
               disabled={sending}
             />
             <button
+              type="button"
               onClick={sendMessage}
               disabled={sending || !input.trim()}
               className="btn-primary px-4 self-end h-14"

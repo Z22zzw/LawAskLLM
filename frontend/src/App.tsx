@@ -6,6 +6,7 @@ import DashboardPage from './pages/DashboardPage'
 import ChatPage from './pages/ChatPage'
 import KbAdminPage from './pages/KbAdminPage'
 import UserAdminPage from './pages/UserAdminPage'
+import ExperimentPage from './pages/ExperimentPage'
 
 const qc = new QueryClient()
 
@@ -19,6 +20,7 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/kb" element={<KbAdminPage />} />
+            <Route path="/experiments" element={<ExperimentPage />} />
             <Route path="/admin" element={<UserAdminPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

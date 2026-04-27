@@ -11,6 +11,12 @@ from langchain_core.tools import tool
 from legal_domain_map import normalize_legal_domain_for_filter
 from rag_llm import answer_non_legal, llm_intent_route
 from rag_prefs import load_rag_prefs
+from rag_stream_callbacks import emit_trace_step
+
+
+def _agent_tr(trace: List[str], msg: str) -> None:
+    trace.append(msg)
+    emit_trace_step(msg)
 
 
 def _zero_citation_stats() -> Dict[str, int]:
@@ -65,6 +71,7 @@ def search_legal_kb(query: str, legal_domain: str = "", dataset: str = "balanced
 def _error_result(
     msg: str, trace_tag: str, legal_domain: str, extra: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
+    emit_trace_step(trace_tag)
     out: Dict[str, Any] = {
         "answer": msg,
         "citations": [],
@@ -132,7 +139,8 @@ def answer_with_agent(
     legal_domain: str = "",
     enable_fallback: bool = True,
 ) -> Dict[str, Any]:
-    trace: List[str] = ["agent:start"]
+    trace: List[str] = []
+    _agent_tr(trace, "agent:start")
 
     if not (question or "").strip():
         return _error_result("请输入你的问题。", "agent:empty", legal_domain)
@@ -145,7 +153,7 @@ def answer_with_agent(
 
     # 非法律：直接用 LLM 作答，不进 agent graph
     if intent == "non_legal":
-        trace.append("agent:non_legal_direct（非法律问题，不进 agent graph，直接由 LLM 作答）")
+        _agent_tr(trace, "agent:non_legal_direct（非法律问题，不进 agent graph，直接由 LLM 作答）")
         answer = answer_non_legal(question, chat_history=chat_history, long_term_summary=long_term_summary)
         return {
             "answer": answer,
@@ -166,7 +174,7 @@ def answer_with_agent(
         from langchain_core.messages import HumanMessage
         from langchain_openai import ChatOpenAI
     except ImportError as e:
-        trace.append("agent:import_fallback")
+        _agent_tr(trace, "agent:import_fallback")
         if not enable_fallback:
             return _error_result(
                 f"Agent 依赖加载失败，且当前实验关闭了回退机制：{e}",
@@ -191,7 +199,7 @@ def answer_with_agent(
     try:
         agent_graph = create_agent(model=llm, tools=[search_legal_kb], system_prompt=system_prompt)
     except Exception as e:
-        trace.append("agent:create_agent_failed")
+        _agent_tr(trace, "agent:create_agent_failed")
         if not enable_fallback:
             return _error_result(
                 f"Agent 创建失败，且当前实验关闭了回退机制：{e}",
@@ -213,7 +221,7 @@ def answer_with_agent(
 
     try:
         result = agent_graph.invoke({"messages": [HumanMessage(content=user_block)]})
-        trace.append("agent:graph_done")
+        _agent_tr(trace, "agent:graph_done")
         out_text = _extract_agent_text(result.get("messages") or [])
         return {
             "answer": out_text or "（Agent 未返回文本）",
@@ -230,7 +238,7 @@ def answer_with_agent(
             "evidence_labels": [],
         }
     except Exception as e:
-        trace.append("agent:graph_error")
+        _agent_tr(trace, "agent:graph_error")
         if not enable_fallback:
             return _error_result(
                 f"Agent 执行失败，且当前实验关闭了回退机制：{e}",
@@ -255,7 +263,7 @@ def _fallback_lcel(
 ) -> Dict[str, Any]:
     import rag_service as rs
 
-    trace.append(f"agent:fallback_lcel:{err[:120]}")
+    _agent_tr(trace, f"agent:fallback_lcel:{err[:120]}")
     state: Dict[str, Any] = {
         "question": question,
         "chat_history": chat_history or [],

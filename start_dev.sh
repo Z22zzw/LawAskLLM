@@ -6,7 +6,10 @@ echo "==> 启动开发数据库 (MySQL)..."
 docker compose -f docker-compose.dev.yml up -d
 
 echo "==> 等待 MySQL 就绪..."
-sleep 5
+until docker compose -f docker-compose.dev.yml exec -T mysql mysqladmin ping -h 127.0.0.1 --silent 2>/dev/null; do
+  echo "  等待中..."
+  sleep 2
+done
 
 echo ""
 echo "✅ 开发环境准备完成"

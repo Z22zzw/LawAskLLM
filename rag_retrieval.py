@@ -10,8 +10,14 @@ from typing import Any, Dict, List, Optional
 
 import config
 from legal_domain_map import LEGAL_DOMAIN_LABELS, normalize_legal_domain_for_filter
+from rag_stream_callbacks import emit_trace_step
 
 FilterType = Optional[Dict[str, Any]]
+
+
+def _tr_push(trace: List[str], msg: str) -> None:
+    trace.append(msg)
+    emit_trace_step(msg)
 
 _EVIDENCE_SNIPPET_MAX = 600
 
@@ -140,7 +146,7 @@ def _search_with_optional_mmr(
                 filter=filt,
             )
         except Exception:
-            trace.append("检索：MMR 去重不可用，回退到相似度检索（mmr_fallback）")
+            _tr_push(trace, "检索：MMR 去重不可用，回退到相似度检索（mmr_fallback）")
     return vector_store.similarity_search(query, **kwargs)
 
 
@@ -170,7 +176,7 @@ def _keyword_enhanced_search(
         except Exception:
             continue
     if all_docs:
-        trace.append(f"步骤3-b：关键词增强检索补充了 {len(all_docs)} 条证据（keyword_search）")
+        _tr_push(trace, f"步骤3-b：关键词增强检索补充了 {len(all_docs)} 条证据（keyword_search）")
     return all_docs
 
 
@@ -214,10 +220,10 @@ def retrieve_documents(
     trace = trace if trace is not None else []
     ld = normalize_legal_domain_for_filter(legal_domain)
     if ld:
-        trace.append(f"检索范围：按法律领域「{ld}」过滤（legal_domain_filter）")
+        _tr_push(trace, f"检索范围：按法律领域「{ld}」过滤（legal_domain_filter）")
 
     mode = resolve_source_mode(source_mode, question)
-    trace.append(f"检索模式：{mode}（retrieve_mode）")
+    _tr_push(trace, f"检索模式：{mode}（retrieve_mode）")
 
     jec_f = _filter_for_dataset(config.DATASET_JEC_QA, ld)
     cail_f = _filter_for_dataset(config.DATASET_CAIL2018, ld)
@@ -247,7 +253,7 @@ def retrieve_documents(
 
     # Phase 2：关键词增强 + RRF 融合 + 重排（可关闭，用于消融）
     if not use_rrf:
-        trace.append("步骤4：已关闭 RRF/关键词重排（ablation:no_rrf）")
+        _tr_push(trace, "步骤4：已关闭 RRF/关键词重排（ablation:no_rrf）")
     elif query_keywords:
         specific_terms = list(query_keywords.get("specific_terms") or [])
         broad_topics = list(query_keywords.get("broad_topics") or [])
@@ -261,7 +267,7 @@ def retrieve_documents(
             fused = rrf_fuse([semantic_docs, kw_docs]) if kw_docs else list(semantic_docs)
             fused = _rerank_by_keyword_relevance(fused, specific_terms + broad_topics, question)
             semantic_docs = fused
-            trace.append("步骤4：多路检索融合排序 — RRF 融合 + 关键词相关性重排序（dual_retrieval:rrf）")
+            _tr_push(trace, "步骤4：多路检索融合排序 — RRF 融合 + 关键词相关性重排序（dual_retrieval:rrf）")
 
     return semantic_docs[:top_k]
 
@@ -321,8 +327,46 @@ def retrieve_with_multi_queries(
         except Exception:
             continue
     fused = rrf_fuse(ranked_lists)
-    trace.append(
+    _tr_push(
+        trace,
         f"步骤3+：使用 LLM 意图路由的 {len(queries)} 条 search_queries 做多路检索并 RRF 融合"
-        "（chain:multi_query_retrieve）"
+        "（chain:multi_query_retrieve）",
     )
     return fused[:top_k] if fused else base_docs
+
+
+def retrieve_user_kb_documents(
+    collection_dir_names: List[str],
+    question: str,
+    k_total: int,
+    trace: List[str],
+) -> List:
+    """
+    从用户知识库（独立 Chroma 子目录）检索，metadata.dataset 为 user_kb。
+    """
+    from pathlib import Path
+
+    from vector_store_service import get_kb_chroma_vector_store
+
+    if not collection_dir_names or not (question or "").strip():
+        return []
+    names = [str(n).strip() for n in collection_dir_names if n and str(n).strip()]
+    if not names:
+        return []
+    per = max(2, min(8, int(k_total) // max(len(names), 1)))
+    out: List = []
+    for name in names:
+        persist = Path(config.VECTOR_DB_DIR) / name
+        sqlite = persist / "chroma.sqlite3"
+        if not sqlite.exists():
+            _tr_push(trace, f"用户知识库目录尚无索引文件（跳过）：{name}")
+            continue
+        try:
+            vs = get_kb_chroma_vector_store(name)
+            docs = vs.similarity_search(question, k=per)
+            out.extend(docs or [])
+        except Exception as e:
+            _tr_push(trace, f"用户知识库检索失败（{name}）：{e}")
+    if out:
+        _tr_push(trace, f"步骤3-a：用户知识库补充检索 {len(out)} 条（user_kb_retrieve）")
+    return out
