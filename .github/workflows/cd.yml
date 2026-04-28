@@ -20,5 +20,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Placeholder .env for compose validation
+        run: cp .env.example .env
+
       - name: Validate docker compose
         run: docker compose -f docker-compose.yml config
