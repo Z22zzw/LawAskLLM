@@ -25,14 +25,19 @@ LawAskLLM 部署备忘（公网 49.235.100.186）
 五、环境变量
 - 容器内 MYSQL_HOST=mysql；compose 会覆盖 .env 中的 MYSQL_HOST。
 
-六、GitHub Actions CD（PROD_SSH_KEY 填什么）
-- secrets.PROD_SSH_KEY 必须是「私钥」的完整文本（含 -----BEGIN ... PRIVATE KEY----- 到 -----END ...-----），不是公钥、不是空文件。
-- 在任意安全机器上生成仅用于 CI 部署的密钥对（示例）：
-    ssh-keygen -t ed25519 -f lawask_github_deploy -N "" -C "lawask-github-actions"
-- 把「公钥」内容追加到生产机部署用户的 ~/.ssh/authorized_keys（一行一个）：
-    cat lawask_github_deploy.pub | ssh PROD_USER@PROD_HOST "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
-  或手动粘贴 lawask_github_deploy.pub 那一整行。
-- 把「私钥」文件 lawask_github_deploy 的全部内容复制到 GitHub：仓库 Settings → Secrets and variables → Actions → New repository secret，名称 PROD_SSH_KEY。
-- 同时配置：PROD_HOST、PROD_USER；PROD_PATH 建议设为生产机上仓库根路径（如 /data/LawAskLLM）；PROD_PORT 非 22 时再填。
-- 若私钥设了口令：另建 Secret「PROD_SSH_PASSPHRASE」填口令；CD 会用 ssh-keygen 在 Runner 上去掉加密后再 ssh-add。私钥已**无口令**时不要建该 Secret（误填会导致 ssh-keygen 失败）。
-- 专用部署密钥也可使用 ssh-keygen -N "" 无口令，配合仅用于部署的公钥。
+六、持续部署（拉取式，推荐）
+- 生产环境**不再**使用 GitHub Actions SSH 登录服务器（避免境外 IP 被主机安全告警）。
+- 流程：合并到 main 后，由**本机定时**执行 `scripts/deploy-pull.sh`：`git fetch` → 与 origin/main 有差异则调用 `deploy-prod.sh`（pull + docker compose + 健康检查）。
+- 首次启用（root 示例，路径按实际改）：
+    chmod +x /data/LawAskLLM/scripts/deploy-pull.sh
+    sudo cp /data/LawAskLLM/deploy/lawask-pull-deploy.service /etc/systemd/system/
+    sudo cp /data/LawAskLLM/deploy/lawask-pull-deploy.timer /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now lawask-pull-deploy.timer
+- 查看下次执行与日志：
+    systemctl list-timers lawask-pull-deploy.timer
+    journalctl -u lawask-pull-deploy.service -n 50 --no-pager
+- **私仓拉代码**：在服务器上为 git 配置只读权限（任选其一）  
+  - HTTPS：`git remote set-url origin https://<TOKEN>@github.com/OWNER/REPO.git`（TOKEN 只放服务器，勿入库）；或  
+  - SSH：在本机 `~/.ssh` 配置用于 `git@github.com` 的 deploy key（只读）。
+- GitHub Actions：**CD** 工作流仅对 main 做 `docker compose config` 冒烟；真正发布依赖服务器 timer。

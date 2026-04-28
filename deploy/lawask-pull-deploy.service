@@ -1,0 +1,10 @@
+[Unit]
+Description=LawAskLLM pull-based deploy (git pull + docker compose)
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/data/LawAskLLM
+# 按实际路径/用户修改；需保证该用户对仓库与 docker 有权限
+ExecStart=/usr/bin/bash /data/LawAskLLM/scripts/deploy-pull.sh /data/LawAskLLM main

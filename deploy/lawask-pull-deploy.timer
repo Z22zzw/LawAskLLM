@@ -1,0 +1,13 @@
+[Unit]
+Description=Timer: LawAskLLM pull deploy from GitHub
+
+[Timer]
+Unit=lawask-pull-deploy.service
+# 开机后约 2 分钟首次检查，之后每 5 分钟检查一次（可按需改）
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
