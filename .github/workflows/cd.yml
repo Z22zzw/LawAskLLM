@@ -28,13 +28,30 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/cd_deploy_key
           chmod 600 ~/.ssh/cd_deploy_key
-          eval "$(ssh-agent -s)"
-          if [ -n "${SSH_KEY_PASSPHRASE:-}" ]; then
-            # 用 ssh-keygen 去掉加密层，再 ssh-add，避免 askpass/expect 在 Runner 上不稳定
-            ssh-keygen -p -f ~/.ssh/cd_deploy_key -P "$SSH_KEY_PASSPHRASE" -N "" >/dev/null
+          # 避免从 Windows/某些编辑器复制出的 CRLF 导致密钥或口令不匹配
+          sed -i 's/\r$//' ~/.ssh/cd_deploy_key 2>/dev/null || true
+
+          KEY="$HOME/.ssh/cd_deploy_key"
+          # Secret 里不要带首尾换行；去掉 \r 避免「有口令却像卡住/失败」
+          PASS="$(printf '%s' "${SSH_KEY_PASSPHRASE:-}" | tr -d '\r\n')"
+
+          if [ -z "$PASS" ]; then
+            # 加密私钥在无 TTY 下 ssh-add 会提示口令然后失败；未配口令时先检测并明确报错
+            if ! timeout 20 ssh-keygen -y -f "$KEY" </dev/null >/dev/null 2>&1; then
+              echo "::error::PROD_SSH_KEY 是加密私钥，但未配置 PROD_SSH_PASSPHRASE。请到 Actions Secrets 添加正确口令，或改用无口令部署密钥：ssh-keygen -t ed25519 -N '' -f key"
+              exit 1
+            fi
+          else
+            # </dev/null 防止 ssh-keygen 在个别环境下仍等待终端导致「卡住」
+            if ! ssh-keygen -q -p -f "$KEY" -P "$PASS" -N "" </dev/null; then
+              echo "::error::PROD_SSH_PASSPHRASE 与私钥不匹配，或私钥格式异常。请核对口令（无多余空格/换行），必要时重新生成密钥。"
+              exit 1
+            fi
           fi
-          ssh-add ~/.ssh/cd_deploy_key
-          rm -f ~/.ssh/cd_deploy_key
+
+          eval "$(ssh-agent -s)"
+          ssh-add "$KEY" </dev/null
+          rm -f "$KEY"
           echo "SSH_AUTH_SOCK=${SSH_AUTH_SOCK}" >> "$GITHUB_ENV"
           echo "SSH_AGENT_PID=${SSH_AGENT_PID}" >> "$GITHUB_ENV"
 
