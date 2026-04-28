@@ -34,5 +34,5 @@ LawAskLLM 部署备忘（公网 49.235.100.186）
   或手动粘贴 lawask_github_deploy.pub 那一整行。
 - 把「私钥」文件 lawask_github_deploy 的全部内容复制到 GitHub：仓库 Settings → Secrets and variables → Actions → New repository secret，名称 PROD_SSH_KEY。
 - 同时配置：PROD_HOST、PROD_USER；PROD_PATH 建议设为生产机上仓库根路径（如 /data/LawAskLLM）；PROD_PORT 非 22 时再填。
-- 若私钥设了口令：另建 Secret「PROD_SSH_PASSPHRASE」填口令明文（CD 工作流会通过 SSH_ASKPASS 调用 ssh-add）。无口令密钥可留空或不建该 Secret。
+- 若私钥设了口令：另建 Secret「PROD_SSH_PASSPHRASE」填口令；CD 会用 ssh-keygen 在 Runner 上去掉加密后再 ssh-add。私钥已**无口令**时不要建该 Secret（误填会导致 ssh-keygen 失败）。
 - 专用部署密钥也可使用 ssh-keygen -N "" 无口令，配合仅用于部署的公钥。
