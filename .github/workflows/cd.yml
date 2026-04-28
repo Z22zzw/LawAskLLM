@@ -30,10 +30,14 @@ jobs:
           chmod 600 ~/.ssh/cd_deploy_key
           eval "$(ssh-agent -s)"
           if [ -n "${SSH_KEY_PASSPHRASE:-}" ]; then
-            printf '%s\n' '#!/bin/sh' 'printf "%s\n" "$SSH_KEY_PASSPHRASE"' > /tmp/git-askpass.sh
+            # askpass 子进程不会继承 env，口令写入临时文件由脚本 cat 输出（避免挂起）
+            PP_FILE="$(mktemp)"
+            printf '%s\n' "$SSH_KEY_PASSPHRASE" > "$PP_FILE"
+            chmod 600 "$PP_FILE"
+            printf '%s\n' '#!/bin/sh' "cat \"${PP_FILE}\"" > /tmp/git-askpass.sh
             chmod 700 /tmp/git-askpass.sh
             DISPLAY=:0 SSH_ASKPASS_REQUIRE=force SSH_ASKPASS=/tmp/git-askpass.sh ssh-add ~/.ssh/cd_deploy_key
-            rm -f /tmp/git-askpass.sh
+            rm -f /tmp/git-askpass.sh "$PP_FILE"
           else
             ssh-add ~/.ssh/cd_deploy_key
           fi
