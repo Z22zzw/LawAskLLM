@@ -29,9 +29,6 @@ ENV/
 # IDEs
 .vscode/
 .idea/
-*.swp
-*.swo
-*~
 
 # Environment variables
 .env
@@ -46,9 +43,51 @@ ENV/
 data/
 向量数据库/
 chroma_data/
+历史聊天信息存储/
+实验记录/
+uploads/
+runtime_rag_prefs.json
 *.jsonl
 *.csv
 *.zip
+
+# Local exports / experiment outputs
+session_exports/
+*.parquet
+
+# Archives & binaries / model weights (do not commit)
+*.7z
+*.rar
+*.tar
+*.gz
+*.tgz
+*.pdf
+*.bin
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.h5
+*.mp4
+*.mov
+*.wav
+
+# Editor / temp
+*.swp
+*.swo
+*~
+.vim/
+
+# Test / coverage
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Misc deploy keys (never commit)
+*_github_deploy
+*_github_deploy.pub
 
 # Logs
 *.log

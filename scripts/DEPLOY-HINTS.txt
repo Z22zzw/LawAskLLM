@@ -24,3 +24,14 @@ LawAskLLM 部署备忘（公网 49.235.100.186）
 
 五、环境变量
 - 容器内 MYSQL_HOST=mysql；compose 会覆盖 .env 中的 MYSQL_HOST。
+
+六、GitHub Actions CD（PROD_SSH_KEY 填什么）
+- secrets.PROD_SSH_KEY 必须是「私钥」的完整文本（含 -----BEGIN ... PRIVATE KEY----- 到 -----END ...-----），不是公钥、不是空文件。
+- 在任意安全机器上生成仅用于 CI 部署的密钥对（示例）：
+    ssh-keygen -t ed25519 -f lawask_github_deploy -N "" -C "lawask-github-actions"
+- 把「公钥」内容追加到生产机部署用户的 ~/.ssh/authorized_keys（一行一个）：
+    cat lawask_github_deploy.pub | ssh PROD_USER@PROD_HOST "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+  或手动粘贴 lawask_github_deploy.pub 那一整行。
+- 把「私钥」文件 lawask_github_deploy 的全部内容复制到 GitHub：仓库 Settings → Secrets and variables → Actions → New repository secret，名称 PROD_SSH_KEY。
+- 同时配置：PROD_HOST、PROD_USER；PROD_PATH 建议设为生产机上仓库根路径（如 /data/LawAskLLM）；PROD_PORT 非 22 时再填。
+- 若私钥设了口令，需在 ssh-agent 步骤额外配 passphrase（见 webfactory/ssh-agent 文档）；专用部署密钥建议使用空口令并限制该公钥仅能执行必要命令（可选 sshd ForceCommand）。

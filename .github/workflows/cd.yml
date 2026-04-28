@@ -1,0 +1,41 @@
+name: CD
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: cd-production
+  cancel-in-progress: true
+
+jobs:
+  deploy-production:
+    name: Deploy to production server
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PROD_SSH_KEY }}
+
+      - name: Add host to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "${{ secrets.PROD_PORT || 22 }}" "${{ secrets.PROD_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Run production deploy script
+        env:
+          PROD_HOST: ${{ secrets.PROD_HOST }}
+          PROD_PORT: ${{ secrets.PROD_PORT }}
+          PROD_USER: ${{ secrets.PROD_USER }}
+          PROD_PATH: ${{ secrets.PROD_PATH }}
+        run: |
+          DEPLOY_PORT="${PROD_PORT:-22}"
+          # 默认与生产机常见 clone 路径一致；未设 Secret 时请改为你的实际目录
+          DEPLOY_PATH="${PROD_PATH:-/data/LawAskLLM}"
+          ssh -p "$DEPLOY_PORT" "${PROD_USER}@${PROD_HOST}" "cd '$DEPLOY_PATH' && bash scripts/deploy-prod.sh '$DEPLOY_PATH' main"
