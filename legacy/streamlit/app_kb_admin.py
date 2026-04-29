@@ -2,9 +2,9 @@ import traceback
 
 import streamlit as st
 
-import config
-from kb_update_service import update_vector_store_from_cail2018, update_vector_store_from_jec_qa
-from rag_prefs import load_rag_prefs, save_rag_prefs
+from app.core import config
+from app.knowledge.kb_update import update_vector_store_from_cail2018, update_vector_store_from_jec_qa
+from app.rag.prefs import load_rag_prefs, save_rag_prefs
 from ui_styles import inject_kb_css
 
 

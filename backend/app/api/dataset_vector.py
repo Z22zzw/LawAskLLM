@@ -27,8 +27,8 @@ def _append_log(job_id: str, line: str) -> None:
 
 
 def _run_build_job(job_id: str, body: DatasetBuildRequest) -> None:
-    import config as root_config
-    from kb_update_service import update_vector_store_from_cail2018, update_vector_store_from_jec_qa
+    from app.core import config as root_config
+    from app.knowledge.kb_update import update_vector_store_from_cail2018, update_vector_store_from_jec_qa
 
     with _jobs_lock:
         _jobs[job_id]["status"] = "running"
@@ -93,7 +93,7 @@ def _run_build_job(job_id: str, body: DatasetBuildRequest) -> None:
 
 @router.get("/options")
 def build_options(_: User = Depends(get_current_user)):
-    import config as root_config
+    from app.core import config as root_config
 
     jec_files = {
         "0_train.json": "训练集（题型0）",

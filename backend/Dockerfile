@@ -7,19 +7,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc g++ libffi-dev libssl-dev curl \
     && rm -rf /var/lib/apt/lists/*
 
-# 先复制根目录 RAG 模块
-COPY ./requirements.txt /workspace/requirements.txt
-COPY ./backend/requirements.txt /workspace/backend_requirements.txt
+# 安装后端依赖（RAG 核心已内聚到 backend/app）
+COPY ./backend/requirements.txt /workspace/backend/requirements.txt
 
-RUN pip install --no-cache-dir -r /workspace/requirements.txt \
-    && pip install --no-cache-dir -r /workspace/backend_requirements.txt
+RUN pip install --no-cache-dir -r /workspace/backend/requirements.txt
 
 # 复制项目
 COPY . /workspace/
 
 WORKDIR /workspace/backend
 
-ENV PYTHONPATH=/workspace
+ENV PYTHONPATH=/workspace/backend
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000

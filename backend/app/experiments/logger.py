@@ -7,10 +7,21 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 
-import config
-from rag_display import unpack_assistant_content
+from app.core import config
+
+RAG_META_MARKER = "\n\n---RAG_META_START---\n"
+
+
+def unpack_assistant_content(content: str) -> Tuple[str, Optional[Dict[str, Any]]]:
+    if not content or RAG_META_MARKER not in content:
+        return content or "", None
+    head, _, tail = content.partition(RAG_META_MARKER)
+    try:
+        return head, json.loads(tail)
+    except json.JSONDecodeError:
+        return content, None
 
 
 def _now_iso() -> str:
