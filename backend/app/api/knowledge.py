@@ -12,8 +12,9 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.database import SessionLocal, get_db
 from app.deps import get_current_user
-from app.models.knowledge import KnowledgeBase, KnowledgeDoc
+from app.models.knowledge import KnowledgeBase, KnowledgeDoc, DocChunk
 from app.models.user import User
+from app.knowledge.vector_store import remove_kb_chroma_subdirectory, rmtree_persistent_path
 from app.schemas.knowledge import (
     DocOut,
     KbCreate,
@@ -180,11 +181,34 @@ def update_kb(kb_id: int, body: KbUpdate, db: Session = Depends(get_db), user: U
     return kb
 
 
+def _cleanup_kb_disk(vector_collection: str, kb_id: int) -> None:
+    """删除磁盘上的 Chroma 子目录与上传目录（与 KnowledgeBase 记录一致）。"""
+    remove_kb_chroma_subdirectory(vector_collection)
+    rmtree_persistent_path(UPLOAD_DIR / str(kb_id))
+
+
 @router.delete("/{kb_id}", status_code=204)
 def delete_kb(kb_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     kb = _kb_or_404(db, kb_id)
     _assert_kb_access(kb, user)
+    vc = kb.vector_collection
+    _cleanup_kb_disk(vc, kb_id)
     db.delete(kb)
+    db.commit()
+
+
+@router.post("/{kb_id}/vector/clear", status_code=204)
+def clear_kb_vector_data(kb_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """保留知识库与文档元数据，仅删除向量存储与明细块并重置入库状态。"""
+    kb = _kb_or_404(db, kb_id)
+    _assert_kb_access(kb, user)
+    remove_kb_chroma_subdirectory(kb.vector_collection)
+    db.query(DocChunk).filter(DocChunk.kb_id == kb_id).delete(synchronize_session=False)
+    for d in db.query(KnowledgeDoc).filter(KnowledgeDoc.kb_id == kb_id).order_by(KnowledgeDoc.id.asc()).all():
+        d.chunk_count = 0
+        d.status = "pending"
+        d.error_msg = ""
+    kb.updated_at = datetime.utcnow()
     db.commit()
 
 

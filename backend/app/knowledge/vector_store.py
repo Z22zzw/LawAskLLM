@@ -122,37 +122,54 @@ def get_kb_chroma_vector_store(collection_dir_name: str):
     )
 
 
+def rmtree_persistent_path(target: Path) -> None:
+    """
+    删除目录树（常用于 Chroma 持久化目录）。
+    Windows 下 chroma.sqlite3 常被占用，`rmtree` 会 WinError 32，做多轮短重试。
+    """
+    target = Path(target)
+    if not target.exists():
+        return
+    last_err = None
+    n = config.VECTOR_DB_RESET_MAX_ATTEMPTS
+    delay = config.VECTOR_DB_RESET_RETRY_DELAY_SEC
+    for attempt in range(n):
+        try:
+            shutil.rmtree(target)
+            last_err = None
+            break
+        except PermissionError as e:
+            last_err = e
+            if attempt < n - 1:
+                time.sleep(delay)
+
+    if last_err is not None and target.exists():
+        raise PermissionError(
+            f"无法删除向量库目录：{target} 仍被占用（常见为 chroma.sqlite3 被其它进程打开）。\n"
+            "请依次尝试：\n"
+            "1) 停止正在运行的后端服务或向量构建任务\n"
+            "2) 关闭其它会加载本项目的 Python / Jupyter\n"
+            "3) 关掉资源管理器中打开该文件夹的窗口（含右侧预览窗格）\n"
+            "4) 任务管理器中结束仍占用该目录的 python.exe\n"
+            f"仍失败可调高等待：环境变量 VECTOR_DB_RESET_MAX_ATTEMPTS、VECTOR_DB_RESET_RETRY_DELAY_SEC"
+        ) from last_err
+
+
+def remove_kb_chroma_subdirectory(collection_dir_name: str) -> None:
+    """
+    删除某个知识库对应的 Chroma 持久化子目录（与 KnowledgeBase.vector_collection 同名）。
+    不自动重建目录；下次索引时 get_kb_chroma_vector_store 会 mkdir。
+    """
+    p = Path(config.VECTOR_DB_DIR) / collection_dir_name
+    rmtree_persistent_path(p)
+
+
 def reset_vector_store(persist_dir: Optional[Path] = None):
     """
     删除持久化目录，下一次会重新从数据构建向量库。
     """
     persist_dir = persist_dir or config.VECTOR_DB_DIR
-    if persist_dir.exists():
-        # Windows：另一服务或其它进程打开 chroma.sqlite3 时，rmtree 会 WinError 32。
-        # 多轮重试给人工关页面 / 进程释放句柄的时间；可用环境变量调大。
-        last_err = None
-        n = config.VECTOR_DB_RESET_MAX_ATTEMPTS
-        delay = config.VECTOR_DB_RESET_RETRY_DELAY_SEC
-        for attempt in range(n):
-            try:
-                shutil.rmtree(persist_dir)
-                last_err = None
-                break
-            except PermissionError as e:
-                last_err = e
-                if attempt < n - 1:
-                    time.sleep(delay)
-
-        if last_err is not None and persist_dir.exists():
-            raise PermissionError(
-                f"无法重建向量库目录：{persist_dir} 仍被占用（常见为 chroma.sqlite3 被其它进程打开）。\n"
-                "请依次尝试：\n"
-                "1) 停止正在运行的后端服务或向量构建任务\n"
-                "2) 关闭其它会加载本项目的 Python / Jupyter\n"
-                "3) 关掉资源管理器中打开「向量数据库」文件夹的窗口（含右侧预览窗格）\n"
-                "4) 任务管理器中结束仍占用该目录的 python.exe\n"
-                f"仍失败可调高等待：环境变量 VECTOR_DB_RESET_MAX_ATTEMPTS、VECTOR_DB_RESET_RETRY_DELAY_SEC"
-            ) from last_err
+    rmtree_persistent_path(persist_dir)
     persist_dir.mkdir(parents=True, exist_ok=True)
     assert_chroma_persist_dir_writable(persist_dir)
 

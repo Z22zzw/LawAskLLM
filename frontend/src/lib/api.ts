@@ -60,6 +60,8 @@ export const kbApi = {
   get: (id: number) => api.get(`/knowledge-bases/${id}`).then(r => r.data),
   update: (id: number, body: object) => api.patch(`/knowledge-bases/${id}`, body).then(r => r.data),
   delete: (id: number) => api.delete(`/knowledge-bases/${id}`),
+  /** 保留知识库与文档，仅清空 Chroma 向量与块记录 */
+  clearVectorData: (id: number) => api.post(`/knowledge-bases/${id}/vector/clear`).then(() => undefined),
   listDocs: (id: number) => api.get(`/knowledge-bases/${id}/documents`).then(r => r.data),
   uploadDoc: (id: number, file: File, splitRole: 'train' | 'test' = 'train') => {
     const fd = new FormData(); fd.append('file', file); fd.append('split_role', splitRole)

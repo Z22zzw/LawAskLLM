@@ -83,6 +83,35 @@ export default function TrainVectorPage() {
     await selectKb(kb)
   }
 
+  const deleteKb = async (id: number) => {
+    if (!confirm('确认删除该向量库？将同时移除数据库记录、向量文件与上传目录，操作不可恢复。')) return
+    await kbApi.delete(id)
+    const remaining = kbs.filter(k => k.id !== id)
+    setKbs(remaining)
+    if (active?.id === id) {
+      clearKbIndexJob()
+      setKbIndexJob(null)
+      setKbIndexJobId(null)
+      if (remaining.length) void selectKb(remaining[0])
+      else { setActive(null); setDocs([]) }
+    }
+  }
+
+  const clearKbVectors = async () => {
+    if (!active) return
+    if (!confirm('确认清空该库的向量索引？文档与上传文件将保留，可重新构建。')) return
+    await kbApi.clearVectorData(active.id)
+    clearKbIndexJob()
+    setKbIndexJob(null)
+    setKbIndexJobId(null)
+    const d = await kbApi.listDocs(active.id)
+    setDocs(d)
+    const list = await kbApi.list()
+    setKbs(list)
+    const next = list.find((k: KnowledgeBase) => k.id === active.id)
+    if (next) setActive(next)
+  }
+
   const uploadDocs = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!active || !e.target.files?.length) return
     setUploading(true)
@@ -131,14 +160,24 @@ export default function TrainVectorPage() {
         )}
         <div className="flex-1 overflow-y-auto py-2">
           {kbs.map(kb => (
-            <button
-              key={kb.id}
-              onClick={() => void selectKb(kb)}
-              className={`mx-2 w-[calc(100%-1rem)] text-left px-3 py-2.5 rounded-md ${active?.id === kb.id ? 'bg-warm-sand' : 'hover:bg-warm-sand/50'}`}
-            >
-              <p className="text-sm font-medium text-deep-dark truncate">{kb.name}</p>
-              <p className="text-xs text-stone-gray">{kb.doc_count} 份文档</p>
-            </button>
+            <div key={kb.id} className="group mx-2 mb-1 flex items-start gap-1">
+              <button
+                type="button"
+                onClick={() => void selectKb(kb)}
+                className={`flex-1 min-w-0 text-left px-3 py-2.5 rounded-md ${active?.id === kb.id ? 'bg-warm-sand' : 'hover:bg-warm-sand/50'}`}
+              >
+                <p className="text-sm font-medium text-deep-dark truncate">{kb.name}</p>
+                <p className="text-xs text-stone-gray">{kb.doc_count} 份文档</p>
+              </button>
+              <button
+                type="button"
+                title="删除知识库"
+                onClick={e => { e.stopPropagation(); void deleteKb(kb.id) }}
+                className="mt-2 flex-shrink-0 p-1 rounded-md text-stone-gray hover:bg-warm-sand hover:text-error-crimson"
+              >
+                <Trash2 size={14} />
+              </button>
+            </div>
           ))}
         </div>
       </aside>
@@ -165,6 +204,9 @@ export default function TrainVectorPage() {
                   <button type="button" onClick={startKbVectorIndex} disabled={!docs.length || kbIndexJob?.status === 'running'} className="btn-secondary inline-flex items-center gap-1.5">
                     {kbIndexJob?.status === 'running' && <Loader2 size={14} className="animate-spin" />}
                     构建向量库
+                  </button>
+                  <button type="button" onClick={() => clearKbVectors()} className="btn-secondary inline-flex items-center gap-1.5" title="仅删除向量索引">
+                    <Database size={14} /> 清空向量
                   </button>
                   <button type="button" onClick={() => void selectKb(active)} className="btn-secondary"><RefreshCw size={14} /></button>
                 </div>

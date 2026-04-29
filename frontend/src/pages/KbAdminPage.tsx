@@ -106,14 +106,32 @@ export default function KbAdminPage() {
   }
 
   const deleteKb = async (id: number) => {
-    if (!confirm('确认删除该知识库？此操作不可恢复。')) return
+    if (!confirm('确认删除该知识库？将同步删除向量数据与上传文件，不可恢复。')) return
     await kbApi.delete(id)
     const remaining = kbs.filter(k => k.id !== id)
     setKbs(remaining)
     if (active?.id === id) {
-      if (remaining.length) selectKb(remaining[0])
+      clearKbIndexJob()
+      setKbIndexJob(null)
+      setKbIndexJobId(null)
+      if (remaining.length) void selectKb(remaining[0])
       else { setActive(null); setDocs([]) }
     }
+  }
+
+  const clearKbVectors = async () => {
+    if (!active) return
+    if (!confirm('确认清空该知识库的向量索引？文档与上传文件保留，可重新构建。')) return
+    await kbApi.clearVectorData(active.id)
+    clearKbIndexJob()
+    setKbIndexJob(null)
+    setKbIndexJobId(null)
+    const d = await kbApi.listDocs(active.id)
+    setDocs(d)
+    const list = await kbApi.list()
+    setKbs(list)
+    const next = list.find((k: KnowledgeBase) => k.id === active.id)
+    if (next) setActive(next)
   }
 
   const uploadDoc = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -219,7 +237,10 @@ export default function KbAdminPage() {
                     {kbIndexJob?.status === 'running' && <Loader2 size={14} className="animate-spin" />}
                     构建向量库
                   </button>
-                  <button type="button" onClick={() => selectKb(active)} className="btn-secondary">
+                  <button type="button" onClick={() => void clearKbVectors()} className="btn-secondary">
+                    清空向量
+                  </button>
+                  <button type="button" onClick={() => void selectKb(active)} className="btn-secondary">
                     <RefreshCw size={14} />
                   </button>
                 </div>
