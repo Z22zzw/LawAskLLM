@@ -27,6 +27,7 @@ class KnowledgeDoc(Base):
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     file_type: Mapped[str] = mapped_column(String(32), default="")
     file_size: Mapped[int] = mapped_column(Integer, default=0)
+    split_role: Mapped[str] = mapped_column(String(16), default="train")
     status: Mapped[str] = mapped_column(String(32), default="pending")  # pending/indexing/indexed/failed
     error_msg: Mapped[str] = mapped_column(Text, default="")
     chunk_count: Mapped[int] = mapped_column(Integer, default=0)

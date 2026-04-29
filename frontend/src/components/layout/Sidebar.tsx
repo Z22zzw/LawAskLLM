@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { MessageSquare, BookOpen, Users, LayoutDashboard, LogOut, Scale, FlaskConical } from 'lucide-react'
+import { MessageSquare, BookOpen, Users, LayoutDashboard, LogOut, Scale, FlaskConical, Database } from 'lucide-react'
 import { useAuthStore } from '../../store/auth'
 import clsx from 'clsx'
 
@@ -7,6 +7,7 @@ const navItems = [
   { to: '/',       icon: LayoutDashboard, label: '控制台' },
   { to: '/chat',   icon: MessageSquare,   label: '智能问答' },
   { to: '/kb',     icon: BookOpen,        label: '知识库' },
+  { to: '/train-vector', icon: Database, label: '训练集向量库' },
   { to: '/experiments', icon: FlaskConical, label: '实验对照' },
   { to: '/admin',  icon: Users,           label: '用户管理', adminOnly: true },
 ]

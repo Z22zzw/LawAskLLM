@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -66,7 +66,7 @@ def _run_kb_index_job(job_id: str, kb_id: int) -> None:
             d.chunk_count = 0
         db.commit()
 
-        rows = [(d.id, d.filename, d.file_type) for d in docs]
+        rows = [(d.id, d.filename, d.file_type, d.split_role) for d in docs]
         upload_dir = UPLOAD_DIR / str(kb_id)
         total, per_doc = index_kb_uploaded_documents(
             kb.vector_collection,
@@ -194,6 +194,7 @@ def delete_kb(kb_id: int, db: Session = Depends(get_db), user: User = Depends(ge
 async def upload_document(
     kb_id: int,
     file: UploadFile = File(...),
+    split_role: str = Form("train"),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
@@ -205,11 +206,15 @@ async def upload_document(
     content = await file.read()
     save_path.write_bytes(content)
 
+    if split_role not in {"train", "test"}:
+        raise HTTPException(status_code=400, detail="split_role 仅支持 train 或 test")
+
     doc = KnowledgeDoc(
         kb_id=kb_id,
         filename=file.filename,
         file_type=Path(file.filename).suffix.lower(),
         file_size=len(content),
+        split_role=split_role,
         status="pending",
         uploaded_by=user.id,
     )
