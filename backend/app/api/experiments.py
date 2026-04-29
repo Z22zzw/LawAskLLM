@@ -13,15 +13,15 @@ from app.schemas.experiments import (
     CompareResponse,
     ExperimentHistoryItem,
 )
-from app.services.experiment_analytics import compute_compare_analysis
-from app.services.experiment_compare import compare_arms_parallel, llm_score_compare_arms
+from app.experiments.analytics import compute_compare_analysis
+from app.experiments.compare import compare_arms_parallel, llm_score_compare_arms
 
 router = APIRouter(prefix="/experiments", tags=["实验对照"])
 
 
 @router.get("/presets")
 def list_presets(_: User = Depends(get_current_user)):
-    from experiment_design import EXPERIMENT_MATRIX, list_experiment_options
+    from app.experiments.design import EXPERIMENT_MATRIX, list_experiment_options
 
     return {
         "options": list_experiment_options(),

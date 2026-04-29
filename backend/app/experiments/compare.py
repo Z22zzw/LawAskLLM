@@ -7,12 +7,12 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional, Tuple
 
-import config
-from llm_client import call_llm
+from app.core import config
+from app.rag.llm_client import call_llm
 
 
 def _run_single_preset(preset_id: str, question: str, legal_domain: str) -> Tuple[str, Dict[str, Any], Dict[str, Any]]:
-    from experiment_design import get_experiment_by_id
+    from app.experiments.design import get_experiment_by_id
 
     from app.services import rag_bridge
 
@@ -98,7 +98,7 @@ def llm_score_compare_arms(
     except Exception as e:
         return {}, f"大模型评分调用失败：{e}"
 
-    from rag_llm import _safe_json
+    from app.rag.llm import _safe_json
 
     try:
         parsed = _safe_json(raw)

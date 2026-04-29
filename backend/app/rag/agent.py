@@ -6,12 +6,12 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-import config
+from app.core import config
 from langchain_core.tools import tool
-from legal_domain_map import normalize_legal_domain_for_filter
-from rag_llm import answer_non_legal, llm_intent_route
-from rag_prefs import load_rag_prefs
-from rag_stream_callbacks import emit_trace_step
+from app.rag.legal_domain_map import normalize_legal_domain_for_filter
+from app.rag.llm import answer_non_legal, llm_intent_route
+from app.rag.prefs import load_rag_prefs
+from app.rag.stream_callbacks import emit_trace_step
 
 
 def _agent_tr(trace: List[str], msg: str) -> None:
@@ -28,8 +28,8 @@ def _zero_citation_stats() -> Dict[str, int]:
 @tool
 def search_legal_kb(query: str, legal_domain: str = "", dataset: str = "balanced") -> str:
     """检索法律向量知识库。legal_domain：与对话选择的领域一致，如 xingfa；综合则留空。dataset：jec-qa / cail2018 / balanced / auto。"""
-    from rag_retrieval import retrieve_documents
-    from vector_store_service import get_chroma_vector_store
+    from app.rag.retrieval import retrieve_documents
+    from app.knowledge.vector_store import get_chroma_vector_store
 
     mode_map = {
         "jec-qa": "jec_only",
@@ -261,7 +261,7 @@ def _fallback_lcel(
     trace: List[str],
     err: str,
 ) -> Dict[str, Any]:
-    import rag_service as rs
+    from app.rag import service as rs
 
     _agent_tr(trace, f"agent:fallback_lcel:{err[:120]}")
     state: Dict[str, Any] = {

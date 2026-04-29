@@ -7,9 +7,9 @@ import shutil
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-import config
-from kb_update_service import _chroma_safe_metadata, _get_recursive_splitter
-from vector_store_service import get_kb_chroma_vector_store
+from app.core import config
+from app.knowledge.kb_update import _chroma_safe_metadata, _get_recursive_splitter
+from app.knowledge.vector_store import get_kb_chroma_vector_store
 
 
 def _read_plain(path: Path) -> str:

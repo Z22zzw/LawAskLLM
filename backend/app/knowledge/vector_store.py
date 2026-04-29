@@ -5,15 +5,15 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import config
+from app.core import config
 
 _CHROMA_WRITE_HINT = (
     "常见原因：①「向量数据库」或 chroma.sqlite3 属主为 root，而当前进程为普通用户；"
     "② Docker 挂载卷与容器内 UID 不一致，或卷以 :ro 只读挂载；"
-    "③ 另一进程（Streamlit 知识库/对话页、第二个 uvicorn）正占用同一 chroma.sqlite3。\n"
+    "③ 另一进程（后端服务、向量构建任务或第二个 uvicorn）正占用同一 chroma.sqlite3。\n"
     "处理建议（在项目根目录的宿主机上执行）：\n"
     "  sudo chown -R \"$USER:$USER\" 向量数据库 && chmod -R u+rwX 向量数据库\n"
-    "Docker：确认 compose 中 `./向量数据库:/workspace/向量数据库` 未加 :ro；可先停止 streamlit_kb / streamlit_chat 再构建。\n"
+    "Docker：确认 compose 中 `./向量数据库:/workspace/向量数据库` 未加 :ro；可先停止 backend 后再构建。\n"
     "仍无法修复时：在 .env 中设置 LAWASK_VECTOR_DB_DIR 为当前用户可写的绝对路径（需与 backend 共用同一变量）。"
 )
 
@@ -128,7 +128,7 @@ def reset_vector_store(persist_dir: Optional[Path] = None):
     """
     persist_dir = persist_dir or config.VECTOR_DB_DIR
     if persist_dir.exists():
-        # Windows：另一 Streamlit（对话页）或其它进程打开 chroma.sqlite3 时，rmtree 会 WinError 32。
+        # Windows：另一服务或其它进程打开 chroma.sqlite3 时，rmtree 会 WinError 32。
         # 多轮重试给人工关页面 / 进程释放句柄的时间；可用环境变量调大。
         last_err = None
         n = config.VECTOR_DB_RESET_MAX_ATTEMPTS
@@ -147,7 +147,7 @@ def reset_vector_store(persist_dir: Optional[Path] = None):
             raise PermissionError(
                 f"无法重建向量库目录：{persist_dir} 仍被占用（常见为 chroma.sqlite3 被其它进程打开）。\n"
                 "请依次尝试：\n"
-                "1) 关闭「对话」页的 Streamlit：运行了 `python start.py` 的终端里按 Ctrl+C（默认端口 8501）\n"
+                "1) 停止正在运行的后端服务或向量构建任务\n"
                 "2) 关闭其它会加载本项目的 Python / Jupyter\n"
                 "3) 关掉资源管理器中打开「向量数据库」文件夹的窗口（含右侧预览窗格）\n"
                 "4) 任务管理器中结束仍占用该目录的 python.exe\n"

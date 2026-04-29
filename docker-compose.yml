@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
 
   # ── MySQL（仅绑定本机，避免公网暴露）──
@@ -32,7 +30,7 @@ services:
     environment:
       MYSQL_HOST: mysql
       MYSQL_PORT: "3306"
-      PYTHONPATH: /workspace
+      PYTHONPATH: /workspace/backend
     volumes:
       - ./向量数据库:/workspace/向量数据库
       - ./data:/workspace/data
@@ -45,81 +43,7 @@ services:
       # 避免与宿主机 projects 的 creator-api(8000) 冲突
       - "127.0.0.1:18081:8000"
 
-  # ── Streamlit 旧版对话（/old/chat，无需前端登录）──
-  streamlit_chat:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    container_name: law_streamlit_chat
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      MYSQL_HOST: mysql
-      PYTHONPATH: /workspace
-    volumes:
-      - ./向量数据库:/workspace/向量数据库
-      - ./data:/workspace/data
-      - ./uploads:/workspace/uploads
-      - ./历史聊天信息存储:/workspace/历史聊天信息存储
-    working_dir: /workspace
-    command:
-      - python
-      - -m
-      - streamlit
-      - run
-      - app_chat.py
-      - --server.port
-      - "8501"
-      - --server.address
-      - "0.0.0.0"
-      - --server.baseUrlPath
-      - /old/chat
-      - --server.enableCORS
-      - "false"
-      - --server.enableXsrfProtection
-      - "false"
-    depends_on:
-      mysql:
-        condition: service_healthy
-
-  # ── Streamlit 向量库管理（/old/db）──
-  streamlit_kb:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    container_name: law_streamlit_kb
-    restart: unless-stopped
-    env_file: .env
-    environment:
-      MYSQL_HOST: mysql
-      PYTHONPATH: /workspace
-    volumes:
-      - ./向量数据库:/workspace/向量数据库
-      - ./data:/workspace/data
-      - ./uploads:/workspace/uploads
-      - ./历史聊天信息存储:/workspace/历史聊天信息存储
-    working_dir: /workspace
-    command:
-      - python
-      - -m
-      - streamlit
-      - run
-      - app_kb_admin.py
-      - --server.port
-      - "8502"
-      - --server.address
-      - "0.0.0.0"
-      - --server.baseUrlPath
-      - /old/db
-      - --server.enableCORS
-      - "false"
-      - --server.enableXsrfProtection
-      - "false"
-    depends_on:
-      mysql:
-        condition: service_healthy
-
-  # ── Nginx：静态前端（多阶段构建）+ API + Streamlit 子路径 ──
+  # ── Nginx：静态前端（多阶段构建）+ API ──
   nginx:
     build:
       context: .
@@ -130,8 +54,6 @@ services:
       - "80:80"
     depends_on:
       - backend
-      - streamlit_chat
-      - streamlit_kb
 
 volumes:
   mysql_data:
