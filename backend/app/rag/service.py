@@ -4,7 +4,7 @@ RAG 对话编排（LCEL 链）：
 - 三分支：空输入 / 非法律直答 / 法律 RAG
 - 法律 RAG：LLM 意图路由的 search_queries → 多路检索 → 证据相关性评估 → 证据感知生成 → 强制「知识库覆盖」小结
 
-对外公共接口（供 app_chat / rag_agent / 外部脚本使用）：
+对外公共接口（供 FastAPI bridge / Agent / 外部脚本使用）：
 - answer_question
 - summarize_for_memory
 - retrieve_documents
@@ -14,11 +14,11 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-import config
+from app.core import config
 from langchain_core.runnables import RunnableBranch, RunnableLambda
-from legal_domain_map import LEGAL_DOMAIN_LABELS, normalize_legal_domain_for_filter
-from llm_client import call_llm, call_llm_stream
-from rag_llm import (
+from app.rag.legal_domain_map import LEGAL_DOMAIN_LABELS, normalize_legal_domain_for_filter
+from app.rag.llm_client import call_llm, call_llm_stream
+from app.rag.llm import (
     answer_non_legal,
     build_clarify_reply,
     extract_query_keywords,
@@ -28,9 +28,9 @@ from rag_llm import (
     score_evidence_relevance,
     summarize_for_memory,
 )
-from rag_prefs import load_rag_prefs
-from rag_stream_callbacks import answer_streaming_enabled, emit_answer_token, emit_trace_step
-from rag_retrieval import (
+from app.rag.prefs import load_rag_prefs
+from app.rag.stream_callbacks import answer_streaming_enabled, emit_answer_token, emit_trace_step
+from app.rag.retrieval import (
     clean_evidence_text,
     format_context,
     resolve_source_mode,
@@ -39,7 +39,7 @@ from rag_retrieval import (
     retrieve_with_multi_queries,
     rrf_fuse,
 )
-from vector_store_service import get_chroma_vector_store
+from app.knowledge.vector_store import get_chroma_vector_store
 
 
 def _tr_emit(tr: List[str], msg: str) -> None:
@@ -599,7 +599,7 @@ def answer_question(
 
     if use_agent:
         try:
-            from rag_agent import answer_with_agent
+            from app.rag.agent import answer_with_agent
 
             t0 = time.perf_counter()
             out = answer_with_agent(

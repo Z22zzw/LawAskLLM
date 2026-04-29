@@ -6,8 +6,8 @@ from __future__ import annotations
 import time
 from typing import Any, Callable, Optional
 
-import rag_service as _rag
-from config import RETRIEVAL_TOP_K
+from app.rag import service as _rag
+from app.core.config import RETRIEVAL_TOP_K
 
 
 def answer(
@@ -27,7 +27,7 @@ def answer(
     t0 = time.time()
     ro = dict(runtime_overrides or {})
     if on_stream_trace or on_stream_token:
-        from rag_stream_callbacks import reset_stream_callbacks, set_stream_callbacks
+        from app.rag.stream_callbacks import reset_stream_callbacks, set_stream_callbacks
 
         tokens = set_stream_callbacks(on_stream_trace, on_stream_token)
         try:

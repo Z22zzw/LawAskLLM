@@ -2,11 +2,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
+from app.core.config import settings
 from app.database import engine, SessionLocal
 from app.models import *  # noqa: F401, F403 — 确保所有模型在 create_all 前导入
 from app.database import Base
-from app.routers import auth, users, chat, knowledge, dataset_vector, experiments
+from app.api import auth, users, chat, knowledge, dataset_vector, experiments
 from app.services.auth_service import ensure_default_admin
 
 

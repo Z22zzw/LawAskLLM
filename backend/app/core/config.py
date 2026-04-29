@@ -2,9 +2,12 @@ import os
 
 from pathlib import Path
 
+from pydantic import Field
+from pydantic_settings import BaseSettings
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 DATA_DIR = PROJECT_ROOT / "data"
 
@@ -15,7 +18,7 @@ DATA_DIR = PROJECT_ROOT / "data"
 _VECTOR_OVERRIDE = os.getenv("LAWASK_VECTOR_DB_DIR", "").strip()
 VECTOR_DB_DIR = Path(_VECTOR_OVERRIDE).resolve() if _VECTOR_OVERRIDE else PROJECT_ROOT / "向量数据库"
 
-# Windows 下 chroma.sqlite3 常被「对话页」Streamlit 或其它进程占用，删除目录需重试
+# Windows 下 chroma.sqlite3 常被后端服务或其它进程占用，删除目录需重试
 VECTOR_DB_RESET_MAX_ATTEMPTS = max(1, int(os.getenv("VECTOR_DB_RESET_MAX_ATTEMPTS", "20")))
 VECTOR_DB_RESET_RETRY_DELAY_SEC = float(os.getenv("VECTOR_DB_RESET_RETRY_DELAY_SEC", "3"))
 
@@ -185,4 +188,64 @@ MYSQL_DB = os.getenv("MYSQL_DB", "law_rag")
 RUNTIME_RAG_PREFS_PATH = PROJECT_ROOT / "runtime_rag_prefs.json"
 
 # 法律领域（id, 展示名）— 与 legal_domain_map 一致，便于统一从 config 导入
-from legal_domain_map import LEGAL_DOMAIN_LABELS, LEGAL_DOMAIN_OPTIONS as LEGAL_DOMAIN_CHOICES  # noqa: E402
+from app.rag.legal_domain_map import LEGAL_DOMAIN_LABELS, LEGAL_DOMAIN_OPTIONS as LEGAL_DOMAIN_CHOICES  # noqa: E402
+
+
+def _default_vector_db_dir() -> Path:
+    raw = os.getenv("LAWASK_VECTOR_DB_DIR", "").strip()
+    return Path(raw).resolve() if raw else VECTOR_DB_DIR
+
+
+class Settings(BaseSettings):
+    # ── 应用 ──
+    APP_NAME: str = "法律 LLM 平台"
+    APP_VERSION: str = "2.0.0"
+    DEBUG: bool = False
+    API_PREFIX: str = "/api/v1"
+
+    # ── JWT ──
+    JWT_SECRET_KEY: str = os.getenv("JWT_SECRET_KEY", "change-me-in-production-please")
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+
+    # ── 数据库 ──
+    MYSQL_HOST: str = MYSQL_HOST
+    MYSQL_PORT: int = MYSQL_PORT
+    MYSQL_USER: str = MYSQL_USER
+    MYSQL_PASSWORD: str = MYSQL_PASSWORD
+    MYSQL_DB: str = os.getenv("MYSQL_DB", "law_llm")
+
+    @property
+    def DATABASE_URL(self) -> str:
+        return (
+            f"mysql+pymysql://{self.MYSQL_USER}:{self.MYSQL_PASSWORD}"
+            f"@{self.MYSQL_HOST}:{self.MYSQL_PORT}/{self.MYSQL_DB}"
+            f"?charset=utf8mb4"
+        )
+
+    # ── LLM / Embedding ──
+    LLM_API_KEY: str = LLM_API_KEY
+    LLM_BASE_URL: str = LLM_BASE_URL
+    LLM_MODEL: str = LLM_MODEL
+    DASHSCOPE_API_KEY: str = DASHSCOPE_API_KEY
+
+    # ── 向量库 ──
+    VECTOR_DB_DIR: Path = Field(default_factory=_default_vector_db_dir)
+
+    # ── CORS ──
+    ALLOWED_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:80",
+        "http://49.235.100.186",
+        "http://49.235.100.186:80",
+    ]
+
+    class Config:
+        env_file = str(PROJECT_ROOT / ".env")
+        env_file_encoding = "utf-8"
+        extra = "ignore"
+
+
+settings = Settings()

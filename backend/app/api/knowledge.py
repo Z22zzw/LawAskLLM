@@ -9,7 +9,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.core.config import settings
 from app.database import SessionLocal, get_db
 from app.deps import get_current_user
 from app.models.knowledge import KnowledgeBase, KnowledgeDoc
@@ -44,7 +44,7 @@ def _kb_index_log(job_id: str, msg: str) -> None:
 
 
 def _run_kb_index_job(job_id: str, kb_id: int) -> None:
-    from user_kb_index_service import index_kb_uploaded_documents
+    from app.knowledge.user_kb_index import index_kb_uploaded_documents
 
     with _kb_index_lock:
         _kb_index_jobs[job_id]["status"] = "running"
