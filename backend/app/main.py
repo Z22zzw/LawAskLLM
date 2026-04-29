@@ -40,6 +40,11 @@ def _seed_permissions(db):
             db.add(Permission(code=code, description=desc))
     db.commit()
 
+def _validate_security_config() -> None:
+    insecure = {"change-me-in-production-please", "replace_with_a_long_random_string"}
+    if settings.APP_ENV.lower() == "production" and settings.JWT_SECRET_KEY.strip() in insecure:
+        raise RuntimeError("JWT_SECRET_KEY 未正确配置，拒绝启动。")
+
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -48,6 +53,8 @@ app = FastAPI(
     redoc_url="/api/redoc",
     lifespan=lifespan,
 )
+
+_validate_security_config()
 
 app.add_middleware(
     CORSMiddleware,

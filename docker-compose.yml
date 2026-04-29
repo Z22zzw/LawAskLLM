@@ -51,7 +51,7 @@ services:
     container_name: law_nginx
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "127.0.0.1:18080:80"
     depends_on:
       - backend
 

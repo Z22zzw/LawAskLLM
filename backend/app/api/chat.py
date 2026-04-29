@@ -99,7 +99,17 @@ def list_messages(session_uuid: str, db: Session = Depends(get_db), user: User =
 
 
 @router.get("/messages/{message_id}/citations", response_model=list[CitationOut])
-def get_citations(message_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def get_citations(message_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    msg = (
+        db.query(ChatMessage)
+        .join(ChatSession, ChatMessage.session_id == ChatSession.id)
+        .filter(ChatMessage.id == message_id)
+        .first()
+    )
+    if not msg:
+        raise HTTPException(status_code=404, detail="消息不存在")
+    if msg.session.user_id and msg.session.user_id != user.id and not user.is_superadmin:
+        raise HTTPException(status_code=403, detail="无权访问该消息引用")
     return db.query(MessageCitation).filter(MessageCitation.message_id == message_id).all()
 
 

@@ -201,6 +201,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "法律 LLM 平台"
     APP_VERSION: str = "2.0.0"
     DEBUG: bool = False
+    APP_ENV: str = os.getenv("APP_ENV", "development")
     API_PREFIX: str = "/api/v1"
 
     # ── JWT ──
@@ -208,13 +209,15 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    ENABLE_DEFAULT_ADMIN_INIT: bool = os.getenv("ENABLE_DEFAULT_ADMIN_INIT", "0").lower() in ("1", "true", "yes")
+    DEFAULT_ADMIN_PASSWORD: str = os.getenv("DEFAULT_ADMIN_PASSWORD", "")
 
     # ── 数据库 ──
     MYSQL_HOST: str = MYSQL_HOST
     MYSQL_PORT: int = MYSQL_PORT
     MYSQL_USER: str = MYSQL_USER
     MYSQL_PASSWORD: str = MYSQL_PASSWORD
-    MYSQL_DB: str = os.getenv("MYSQL_DB", "law_llm")
+    MYSQL_DB: str = MYSQL_DB
 
     @property
     def DATABASE_URL(self) -> str:

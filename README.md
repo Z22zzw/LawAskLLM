@@ -25,7 +25,7 @@
 1. 复制环境变量模板：
 
 ```bash
-cp .env.template .env
+cp .env.example .env
 ```
 
 2. 填写 `.env` 中的 `LLM_API_KEY`、`DASHSCOPE_API_KEY`、`MYSQL_PASSWORD` 等配置。
