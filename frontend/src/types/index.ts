@@ -46,6 +46,7 @@ export interface KbDocument {
   filename: string
   file_type: string
   file_size: number
+  split_role: 'train' | 'test'
   status: 'pending' | 'indexing' | 'indexed' | 'failed'
   error_msg: string
   chunk_count: number

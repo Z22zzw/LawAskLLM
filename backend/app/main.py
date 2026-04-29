@@ -46,6 +46,16 @@ def _validate_security_config() -> None:
         raise RuntimeError("JWT_SECRET_KEY 未正确配置，拒绝启动。")
 
 
+def _ensure_knowledge_doc_split_role_column() -> None:
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as conn:
+        table_info = conn.exec_driver_sql("PRAGMA table_info(knowledge_docs)").fetchall()
+        column_names = {row[1] for row in table_info}
+        if "split_role" not in column_names:
+            conn.exec_driver_sql("ALTER TABLE knowledge_docs ADD COLUMN split_role VARCHAR(16) DEFAULT 'train'")
+
+
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
@@ -55,6 +65,7 @@ app = FastAPI(
 )
 
 _validate_security_config()
+_ensure_knowledge_doc_split_role_column()
 
 app.add_middleware(
     CORSMiddleware,

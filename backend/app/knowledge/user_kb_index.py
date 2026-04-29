@@ -43,13 +43,13 @@ def index_kb_uploaded_documents(
     vector_collection: str,
     kb_name: str,
     upload_dir: Path,
-    doc_rows: List[Tuple[int, str, str]],
+    doc_rows: List[Tuple[int, str, str, str]],
     log: Optional[Callable[[str], None]] = None,
 ) -> Tuple[int, Dict[int, int]]:
     """
     清空该 KB 对应向量目录后，重新索引 doc_rows 中列出的全部文件。
 
-    doc_rows: (doc_id, filename, file_type)
+    doc_rows: (doc_id, filename, file_type, split_role)
     返回 (chunk 总数, doc_id -> chunk 数)。
     """
     from langchain_core.documents import Document
@@ -68,7 +68,7 @@ def index_kb_uploaded_documents(
     total_chunks = 0
     per_doc: dict = {}
 
-    for doc_id, filename, file_type in doc_rows:
+    for doc_id, filename, file_type, split_role in doc_rows:
         path = upload_dir / filename
         if not path.exists():
             L(f"跳过（文件不存在）：{filename}")
@@ -88,6 +88,7 @@ def index_kb_uploaded_documents(
                 {
                     "dataset": config.DATASET_USER_KB,
                     "split": filename,
+                    "split_role": split_role or "train",
                     "id": str(doc_id),
                     "subject": (kb_name or "")[:120],
                     "type": "upload",

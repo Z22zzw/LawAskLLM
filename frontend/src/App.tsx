@@ -7,6 +7,7 @@ import ChatPage from './pages/ChatPage'
 import KbAdminPage from './pages/KbAdminPage'
 import UserAdminPage from './pages/UserAdminPage'
 import ExperimentPage from './pages/ExperimentPage'
+import TrainVectorPage from './pages/TrainVectorPage'
 
 const qc = new QueryClient()
 
@@ -20,6 +21,7 @@ export default function App() {
             <Route path="/" element={<DashboardPage />} />
             <Route path="/chat" element={<ChatPage />} />
             <Route path="/kb" element={<KbAdminPage />} />
+            <Route path="/train-vector" element={<TrainVectorPage />} />
             <Route path="/experiments" element={<ExperimentPage />} />
             <Route path="/admin" element={<UserAdminPage />} />
           </Route>

@@ -38,6 +38,7 @@ class DocOut(BaseModel):
     filename: str
     file_type: str
     file_size: int
+    split_role: Literal["train", "test"] = "train"
     status: str
     error_msg: str
     chunk_count: int
