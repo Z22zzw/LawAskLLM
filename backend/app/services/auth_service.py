@@ -6,7 +6,7 @@ from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.core.config import settings
 from app.models.user import User
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -68,13 +68,17 @@ def get_user_permissions(db: Session, user_id: int) -> set[str]:
 
 
 def ensure_default_admin(db: Session) -> None:
-    """首次启动时创建超级管理员账号（若不存在）。"""
+    """仅在显式启用时创建默认超级管理员账号。"""
+    if settings.ENABLE_DEFAULT_ADMIN_INIT is not True:
+        return
+    if not settings.DEFAULT_ADMIN_PASSWORD.strip():
+        return
     if db.query(User).filter(User.is_superadmin == True).count() > 0:
         return
     admin = User(
         username="admin",
         email="admin@lawllm.local",
-        hashed_password=hash_password("Admin@123456"),
+        hashed_password=hash_password(settings.DEFAULT_ADMIN_PASSWORD),
         display_name="超级管理员",
         is_active=True,
         is_superadmin=True,

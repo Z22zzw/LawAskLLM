@@ -2,13 +2,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 
-import config
-from experiment_design import EVALUATION_DIMENSIONS, SAMPLE_SET_SUGGESTION, get_experiment_by_id, list_experiment_options
-from experiment_logger import append_experiment_turn, build_turn_record, export_session_replay
-import rag_service
+from app.core import config
+from app.experiments.design import EVALUATION_DIMENSIONS, SAMPLE_SET_SUGGESTION, get_experiment_by_id, list_experiment_options
+from app.experiments.logger import append_experiment_turn, build_turn_record, export_session_replay
+from app.rag import service as rag_service
 from ui_styles import inject_chat_css, inject_kb_css
-from memory_store import InMemoryChatStore, MySQLMemoryStore
-from rag_display import (
+from legacy.streamlit.memory_store import InMemoryChatStore, MySQLMemoryStore
+from legacy.streamlit.rag_display import (
     format_retrieval_summary_markdown,
     pack_assistant_content,
     strip_assistant_for_llm,

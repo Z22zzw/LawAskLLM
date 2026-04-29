@@ -9,7 +9,7 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.core.config import settings
 from app.database import SessionLocal, get_db
 from app.deps import get_current_user
 from app.models.knowledge import KnowledgeBase, KnowledgeDoc
@@ -44,7 +44,7 @@ def _kb_index_log(job_id: str, msg: str) -> None:
 
 
 def _run_kb_index_job(job_id: str, kb_id: int) -> None:
-    from user_kb_index_service import index_kb_uploaded_documents
+    from app.knowledge.user_kb_index import index_kb_uploaded_documents
 
     with _kb_index_lock:
         _kb_index_jobs[job_id]["status"] = "running"
@@ -117,9 +117,20 @@ def _kb_or_404(db: Session, kb_id: int) -> KnowledgeBase:
     return kb
 
 
+def _assert_kb_access(kb: KnowledgeBase, user: User) -> None:
+    if user.is_superadmin:
+        return
+    if kb.created_by and kb.created_by == user.id:
+        return
+    raise HTTPException(status_code=403, detail="无权访问该知识库")
+
+
 @router.get("", response_model=list[KbOut])
-def list_kbs(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    kbs = db.query(KnowledgeBase).order_by(KnowledgeBase.created_at.desc()).all()
+def list_kbs(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    q = db.query(KnowledgeBase)
+    if not user.is_superadmin:
+        q = q.filter(KnowledgeBase.created_by == user.id)
+    kbs = q.order_by(KnowledgeBase.created_at.desc()).all()
     result = []
     for kb in kbs:
         out = KbOut.model_validate(kb)
@@ -146,16 +157,18 @@ def create_kb(body: KbCreate, db: Session = Depends(get_db), user: User = Depend
 
 
 @router.get("/{kb_id}", response_model=KbOut)
-def get_kb(kb_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def get_kb(kb_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     kb = _kb_or_404(db, kb_id)
+    _assert_kb_access(kb, user)
     out = KbOut.model_validate(kb)
     out.doc_count = len(kb.documents)
     return out
 
 
 @router.patch("/{kb_id}", response_model=KbOut)
-def update_kb(kb_id: int, body: KbUpdate, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def update_kb(kb_id: int, body: KbUpdate, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     kb = _kb_or_404(db, kb_id)
+    _assert_kb_access(kb, user)
     if body.name is not None:
         kb.name = body.name
     if body.description is not None:
@@ -168,8 +181,9 @@ def update_kb(kb_id: int, body: KbUpdate, db: Session = Depends(get_db), _: User
 
 
 @router.delete("/{kb_id}", status_code=204)
-def delete_kb(kb_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def delete_kb(kb_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     kb = _kb_or_404(db, kb_id)
+    _assert_kb_access(kb, user)
     db.delete(kb)
     db.commit()
 
@@ -184,6 +198,7 @@ async def upload_document(
     user: User = Depends(get_current_user),
 ):
     kb = _kb_or_404(db, kb_id)
+    _assert_kb_access(kb, user)
     save_dir = UPLOAD_DIR / str(kb_id)
     save_dir.mkdir(parents=True, exist_ok=True)
     save_path = save_dir / file.filename
@@ -205,13 +220,16 @@ async def upload_document(
 
 
 @router.get("/{kb_id}/documents", response_model=list[DocOut])
-def list_documents(kb_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    _kb_or_404(db, kb_id)
+def list_documents(kb_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    kb = _kb_or_404(db, kb_id)
+    _assert_kb_access(kb, user)
     return db.query(KnowledgeDoc).filter(KnowledgeDoc.kb_id == kb_id).order_by(KnowledgeDoc.created_at.desc()).all()
 
 
 @router.delete("/{kb_id}/documents/{doc_id}", status_code=204)
-def delete_document(kb_id: int, doc_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
+def delete_document(kb_id: int, doc_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    kb = _kb_or_404(db, kb_id)
+    _assert_kb_access(kb, user)
     doc = db.query(KnowledgeDoc).filter(KnowledgeDoc.id == doc_id, KnowledgeDoc.kb_id == kb_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="文档不存在")
@@ -220,8 +238,9 @@ def delete_document(kb_id: int, doc_id: int, db: Session = Depends(get_db), _: U
 
 
 @router.post("/{kb_id}/index/start", response_model=KbIndexJobCreate)
-def start_kb_vector_index(kb_id: int, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    _kb_or_404(db, kb_id)
+def start_kb_vector_index(kb_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    kb = _kb_or_404(db, kb_id)
+    _assert_kb_access(kb, user)
     job_id = str(uuid.uuid4())
     with _kb_index_lock:
         _kb_index_jobs[job_id] = {"kb_id": kb_id, "status": "pending", "logs": [], "error": None}
@@ -231,8 +250,9 @@ def start_kb_vector_index(kb_id: int, db: Session = Depends(get_db), _: User = D
 
 
 @router.get("/{kb_id}/index/jobs/{job_id}", response_model=KbIndexJobStatus)
-def kb_index_job_status(kb_id: int, job_id: str, db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    _kb_or_404(db, kb_id)
+def kb_index_job_status(kb_id: int, job_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    kb = _kb_or_404(db, kb_id)
+    _assert_kb_access(kb, user)
     with _kb_index_lock:
         j = _kb_index_jobs.get(job_id)
     if not j or j.get("kb_id") != kb_id:
@@ -248,8 +268,11 @@ def kb_index_job_status(kb_id: int, job_id: str, db: Session = Depends(get_db), 
 # ── 向量库状态 ──
 
 @router.get("/vector/stats", response_model=list[VectorCollectionStats])
-def vector_stats(db: Session = Depends(get_db), _: User = Depends(get_current_user)):
-    kbs = db.query(KnowledgeBase).all()
+def vector_stats(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    q = db.query(KnowledgeBase)
+    if not user.is_superadmin:
+        q = q.filter(KnowledgeBase.created_by == user.id)
+    kbs = q.all()
     result = []
     for kb in kbs:
         db_path = settings.VECTOR_DB_DIR / kb.vector_collection / "chroma.sqlite3"

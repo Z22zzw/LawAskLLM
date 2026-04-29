@@ -2,11 +2,11 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import settings
+from app.core.config import settings
 from app.database import engine, SessionLocal
 from app.models import *  # noqa: F401, F403 — 确保所有模型在 create_all 前导入
 from app.database import Base
-from app.routers import auth, users, chat, knowledge, dataset_vector, experiments
+from app.api import auth, users, chat, knowledge, dataset_vector, experiments
 from app.services.auth_service import ensure_default_admin
 
 
@@ -40,6 +40,11 @@ def _seed_permissions(db):
             db.add(Permission(code=code, description=desc))
     db.commit()
 
+def _validate_security_config() -> None:
+    insecure = {"change-me-in-production-please", "replace_with_a_long_random_string"}
+    if settings.APP_ENV.lower() == "production" and settings.JWT_SECRET_KEY.strip() in insecure:
+        raise RuntimeError("JWT_SECRET_KEY 未正确配置，拒绝启动。")
+
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -48,6 +53,8 @@ app = FastAPI(
     redoc_url="/api/redoc",
     lifespan=lifespan,
 )
+
+_validate_security_config()
 
 app.add_middleware(
     CORSMiddleware,
