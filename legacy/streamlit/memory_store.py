@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import config
+from app.core import config
 
 
 def _now_utc_iso() -> str:

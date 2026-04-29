@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from typing import Iterator, List
 
-import config
+from app.core import config
 
 
 _FALLBACK_MODELS: tuple = (

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict
 
-import config
+from app.core import config
 
 DEFAULT_RAG_PREFS: Dict[str, Any] = {
     "source_mode": "balanced",

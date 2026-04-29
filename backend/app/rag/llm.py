@@ -15,9 +15,9 @@ import json
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-import config
-from llm_client import call_llm, call_llm_stream
-from rag_stream_callbacks import answer_streaming_enabled, emit_answer_token, emit_trace_step
+from app.core import config
+from app.rag.llm_client import call_llm, call_llm_stream
+from app.rag.stream_callbacks import answer_streaming_enabled, emit_answer_token, emit_trace_step
 
 
 # ──────────────────────── 关键词兜底规则 ────────────────────────
@@ -301,7 +301,7 @@ def score_evidence_relevance(
         return {"labels": labels, "coverage": _coverage_from_labels(labels), "scored_by": "fallback_keyword"}
 
     # 避免把过长的证据原文全量塞给 LLM
-    from rag_retrieval import clean_evidence_text
+    from app.rag.retrieval import clean_evidence_text
     lines: List[str] = []
     for i, d in enumerate(docs, start=1):
         snippet = clean_evidence_text(getattr(d, "page_content", "") or "").strip()
