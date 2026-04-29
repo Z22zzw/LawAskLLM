@@ -2,9 +2,9 @@ import json
 from pathlib import Path
 from typing import Callable, Iterable, List, Optional, Tuple
 
-import config
-from legal_domain_map import map_cail_to_domain, map_jec_subject_to_domain
-from vector_store_service import get_chroma_vector_store
+from app.core import config
+from app.rag.legal_domain_map import map_cail_to_domain, map_jec_subject_to_domain
+from app.knowledge.vector_store import get_chroma_vector_store
 
 
 def _chroma_safe_metadata(meta: dict) -> dict:
@@ -135,9 +135,9 @@ def update_vector_store_from_jec_qa(
     构建/更新向量库（JEC-QA）。
 
     progress_callback(done_count, total_count, message)：
-    每完成一批嵌入并写入 Chroma 后调用，便于 Streamlit 刷新进度（否则全量一次 add_documents 会长时间无反馈）。
+    每完成一批嵌入并写入 Chroma 后调用，便于前端刷新进度（否则全量一次 add_documents 会长时间无反馈）。
     """
-    from vector_store_service import reset_vector_store
+    from app.knowledge.vector_store import reset_vector_store
 
     if rebuild:
         reset_vector_store()
@@ -219,7 +219,7 @@ def update_vector_store_from_cail2018(
     - `max_items_per_split` 是每个 split 最多入库的“样本条数（case数）”，不等于 chunk 数。
     - progress_callback(cumulative_chunks, message)：每写完一批 chunk 调用一次。
     """
-    from vector_store_service import reset_vector_store
+    from app.knowledge.vector_store import reset_vector_store
 
     if rebuild:
         reset_vector_store()

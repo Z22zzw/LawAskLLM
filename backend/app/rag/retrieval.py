@@ -8,9 +8,9 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-import config
-from legal_domain_map import LEGAL_DOMAIN_LABELS, normalize_legal_domain_for_filter
-from rag_stream_callbacks import emit_trace_step
+from app.core import config
+from app.rag.legal_domain_map import LEGAL_DOMAIN_LABELS, normalize_legal_domain_for_filter
+from app.rag.stream_callbacks import emit_trace_step
 
 FilterType = Optional[Dict[str, Any]]
 
@@ -346,7 +346,7 @@ def retrieve_user_kb_documents(
     """
     from pathlib import Path
 
-    from vector_store_service import get_kb_chroma_vector_store
+    from app.knowledge.vector_store import get_kb_chroma_vector_store
 
     if not collection_dir_names or not (question or "").strip():
         return []
