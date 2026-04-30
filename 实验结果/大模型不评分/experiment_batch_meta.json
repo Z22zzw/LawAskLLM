@@ -1,0 +1,9 @@
+{
+  "created_at_utc": "2026-04-30T05:00:14.831250+00:00",
+  "legal_domain": "",
+  "llm_score": false,
+  "questions_file": "/data/LawAskLLM/实验题单_20题_小样本.md",
+  "max_questions": "all",
+  "only": "all",
+  "prefs_frozen": "system_full"
+}
