@@ -74,3 +74,74 @@ class ExperimentHistoryItem(BaseModel):
     llm_score_enabled: bool
     created_at: str
     best_balanced_label: Optional[str] = None
+
+
+class BatchDashboardSummary(BaseModel):
+    total_questions: int = 0
+    total_rows: int = 0
+    success_rows: int = 0
+    success_rate: float = 0.0
+    exp_count: int = 0
+    has_llm_scores: bool = False
+    avg_composite: Optional[float] = None
+    avg_llm: Optional[float] = None
+
+
+class BatchMetricSummary(BaseModel):
+    key: str
+    label: str
+    row_count: int = 0
+    success_rate: float = 0.0
+    avg_composite: Optional[float] = None
+    avg_llm: Optional[float] = None
+    avg_latency_ms: Optional[float] = None
+    avg_citation_count: Optional[float] = None
+
+
+class BatchPresetSummary(BatchMetricSummary):
+    preset_id: str
+    group: str = ""
+    is_control: bool = False
+
+
+class BatchAblationDelta(BaseModel):
+    exp: str
+    label: str
+    ablation_preset_id: str
+    question_count: int = 0
+    composite_delta: Optional[float] = None
+    llm_delta: Optional[float] = None
+    citation_delta: Optional[float] = None
+    latency_delta_ms: Optional[float] = None
+
+
+class BatchQuestionResult(BaseModel):
+    exp: str
+    question_id: int
+    block: str
+    question_preview: str = ""
+    preset_id: str
+    label: str = ""
+    group: str = ""
+    is_control: bool = False
+    status: str = ""
+    latency_ms: Optional[float] = None
+    citation_count: Optional[float] = None
+    llm_avg: Optional[float] = None
+    composite_0_1: Optional[float] = None
+    llm_score_note: str = ""
+
+
+class BatchDashboardResponse(BaseModel):
+    available: bool
+    message: str = ""
+    source_kind: str = ""
+    source_path: str = ""
+    meta: dict[str, Any] = Field(default_factory=dict)
+    summary: BatchDashboardSummary = Field(default_factory=BatchDashboardSummary)
+    exp_summaries: list[BatchMetricSummary] = Field(default_factory=list)
+    block_summaries: list[BatchMetricSummary] = Field(default_factory=list)
+    preset_summaries: list[BatchPresetSummary] = Field(default_factory=list)
+    ablation_deltas: list[BatchAblationDelta] = Field(default_factory=list)
+    question_results: list[BatchQuestionResult] = Field(default_factory=list)
+    ai_summary: str = ""

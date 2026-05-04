@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Clock, Loader2, FlaskConical, History } from 'lucide-react'
+import { Activity, Clock, Database, FileText, FlaskConical, History, Loader2, RefreshCw, Trophy } from 'lucide-react'
 import { api } from '../lib/api'
 import { LEGAL_DOMAINS } from '../types'
 import ReactMarkdown from 'react-markdown'
@@ -88,7 +88,102 @@ interface ExperimentHistoryItem {
   best_balanced_label?: string | null
 }
 
-const RADAR_COLORS = ['#c96442', '#5e5d59', '#3898ec', '#87867f']
+interface BatchDashboardSummary {
+  total_questions: number
+  total_rows: number
+  success_rows: number
+  success_rate: number
+  exp_count: number
+  has_llm_scores: boolean
+  avg_composite?: number | null
+  avg_llm?: number | null
+}
+
+interface BatchMetricSummary {
+  key: string
+  label: string
+  row_count: number
+  success_rate: number
+  avg_composite?: number | null
+  avg_llm?: number | null
+  avg_latency_ms?: number | null
+  avg_citation_count?: number | null
+}
+
+interface BatchPresetSummary extends BatchMetricSummary {
+  preset_id: string
+  group: string
+  is_control: boolean
+}
+
+interface BatchAblationDelta {
+  exp: string
+  label: string
+  ablation_preset_id: string
+  question_count: number
+  composite_delta?: number | null
+  llm_delta?: number | null
+  citation_delta?: number | null
+  latency_delta_ms?: number | null
+}
+
+interface BatchQuestionResult {
+  exp: string
+  question_id: number
+  block: string
+  question_preview: string
+  preset_id: string
+  label: string
+  group: string
+  is_control: boolean
+  status: string
+  latency_ms?: number | null
+  citation_count?: number | null
+  llm_avg?: number | null
+  composite_0_1?: number | null
+  llm_score_note: string
+}
+
+interface BatchDashboard {
+  available: boolean
+  message: string
+  source_kind: string
+  source_path: string
+  meta: Record<string, unknown>
+  summary: BatchDashboardSummary
+  exp_summaries: BatchMetricSummary[]
+  block_summaries: BatchMetricSummary[]
+  preset_summaries: BatchPresetSummary[]
+  ablation_deltas: BatchAblationDelta[]
+  question_results: BatchQuestionResult[]
+  ai_summary: string
+}
+
+const RADAR_COLORS = ['#c96442', '#5e5d59', '#b0aea5', '#87867f']
+
+const EXPERIMENT_CARDS = [
+  {
+    no: '实验一',
+    title: '基线对比',
+    control: 'system_full（完整系统 / balanced）',
+    arms: 'baseline_llm_direct、baseline_rag_basic',
+    reason: '验证完整 RAG + 重排 + 证据标注 + Agent 回退，相比仅 LLM 直答和基础 RAG 是否带来整体收益。',
+  },
+  {
+    no: '实验二',
+    title: '数据源策略对比',
+    control: 'system_full（balanced）',
+    arms: 'strategy_auto、strategy_jec_only、strategy_cail_only',
+    reason: '只改变 source_mode，观察自动策略、JEC 单源、CAIL 单源在概念题和案情题上的适配差异。',
+  },
+  {
+    no: '实验三',
+    title: '能力消融',
+    control: 'system_full（完整版）',
+    arms: 'ablation_no_mmr、ablation_no_rrf、ablation_no_evidence_label、ablation_no_agent_fallback',
+    reason: '轮流关闭 MMR、RRF、证据标注与 Agent 回退，定位各模块对质量、证据和稳定性的贡献。',
+  },
+]
 
 function buildRadarData(arms: CompareArm[]) {
   const labels = ['准确性', '证据', '可解释', '稳定']
@@ -120,6 +215,20 @@ const EVAL_HINTS = [
   { name: '稳定性', desc: '异常场景下是否稳定返回可用结果。', rule: '0–2 频繁失败；3 偶发；4–5 稳定。' },
 ]
 
+function fmt(v?: number | null, digits = 2) {
+  if (typeof v !== 'number' || Number.isNaN(v)) return '—'
+  return Number.isInteger(v) ? String(v) : v.toFixed(digits)
+}
+
+function pct(v?: number | null) {
+  if (typeof v !== 'number' || Number.isNaN(v)) return '—'
+  return `${Math.round(v * 100)}%`
+}
+
+function metricValue(row: BatchMetricSummary | BatchPresetSummary, metric: 'avg_composite' | 'avg_llm') {
+  return typeof row[metric] === 'number' ? Math.round((row[metric] as number) * 1000) / 1000 : 0
+}
+
 export default function ExperimentPage() {
   const [matrix, setMatrix] = useState<PresetRow[]>([])
   const [selected, setSelected] = useState<Record<string, boolean>>({})
@@ -134,6 +243,11 @@ export default function ExperimentPage() {
   const [historyItems, setHistoryItems] = useState<ExperimentHistoryItem[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
   const [activeHistoryId, setActiveHistoryId] = useState<number | null>(null)
+  const [dashboard, setDashboard] = useState<BatchDashboard | null>(null)
+  const [dashboardLoading, setDashboardLoading] = useState(false)
+  const [batchMetric, setBatchMetric] = useState<'avg_composite' | 'avg_llm'>('avg_composite')
+  const [detailExp, setDetailExp] = useState('all')
+  const [detailBlock, setDetailBlock] = useState('all')
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true)
@@ -147,6 +261,18 @@ export default function ExperimentPage() {
     }
   }, [])
 
+  const loadDashboard = useCallback(async () => {
+    setDashboardLoading(true)
+    try {
+      const { data } = await api.get<BatchDashboard>('/experiments/batch-dashboard')
+      setDashboard(data)
+    } catch {
+      setDashboard(null)
+    } finally {
+      setDashboardLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     api.get('/experiments/presets').then((r) => {
       const m = (r.data.matrix || []) as PresetRow[]
@@ -156,7 +282,8 @@ export default function ExperimentPage() {
       setSelected(sel)
     }).catch(() => setMatrix([]))
     loadHistory()
-  }, [loadHistory])
+    loadDashboard()
+  }, [loadHistory, loadDashboard])
 
   const chartData = useMemo(() => {
     if (!result?.arms) return []
@@ -194,6 +321,44 @@ export default function ExperimentPage() {
     }
   }
 
+  const expChartData = useMemo(
+    () =>
+      (dashboard?.exp_summaries || []).map((x) => ({
+        name: x.label.replace('实验', '实'),
+        fullLabel: x.label,
+        value: metricValue(x, batchMetric),
+      })),
+    [dashboard, batchMetric]
+  )
+
+  const blockChartData = useMemo(
+    () =>
+      (dashboard?.block_summaries || []).map((x) => ({
+        name: x.label.replace(' 类：', '：'),
+        fullLabel: x.label,
+        value: metricValue(x, batchMetric),
+      })),
+    [dashboard, batchMetric]
+  )
+
+  const ablationChartData = useMemo(
+    () =>
+      (dashboard?.ablation_deltas || []).map((x) => ({
+        name: x.exp,
+        fullLabel: x.label,
+        value: typeof x.composite_delta === 'number' ? Math.round(x.composite_delta * 1000) / 1000 : 0,
+      })),
+    [dashboard]
+  )
+
+  const detailRows = useMemo(() => {
+    const rows = dashboard?.question_results || []
+    return rows
+      .filter((r) => detailExp === 'all' || r.exp === detailExp)
+      .filter((r) => detailBlock === 'all' || r.block === detailBlock)
+      .slice(0, 240)
+  }, [dashboard, detailExp, detailBlock])
+
   const runCompare = async () => {
     const ids = matrix.filter((m) => selected[m.id]).map((m) => m.id)
     if (ids.length < 2) {
@@ -230,15 +395,244 @@ export default function ExperimentPage() {
 
   return (
     <div className="min-h-screen bg-parchment p-6 md:p-10">
-      <div className="mx-auto max-w-6xl">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-8 rounded-[32px] border border-border-cream bg-ivory p-6 md:p-8">
+          <div className="mb-5 flex items-start gap-3">
+            <div className="rounded-lg bg-terracotta/10 p-2.5 text-terracotta">
+              <FlaskConical size={24} />
+            </div>
+            <div>
+              <p className="text-xs uppercase tracking-[0.24em] text-terracotta">Experiment Center</p>
+              <h1 className="mt-1 font-serif text-3xl text-deep-dark">法律 LLM 三组对照实验仪表盘</h1>
+              <p className="mt-2 max-w-3xl text-sm leading-relaxed text-olive-gray">
+                本页把 20 题小样本实验组织成三类对照：基线对比、数据源策略对比和能力消融。
+                上方展示脚本批跑的最近一次 CSV 结果，下方保留单题即时对照，便于复查单个问题。
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            {EXPERIMENT_CARDS.map((card) => (
+              <div key={card.no} className="rounded-2xl border border-border-cream bg-parchment/70 p-4">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="badge-warm">{card.no}</span>
+                  <span className="text-[11px] text-stone-gray">20 题</span>
+                </div>
+                <h2 className="font-serif text-lg text-deep-dark">{card.title}</h2>
+                <p className="mt-2 text-xs leading-relaxed text-olive-gray">
+                  <span className="font-medium text-deep-dark">对照组：</span>{card.control}
+                </p>
+                <p className="mt-1 text-xs leading-relaxed text-olive-gray">
+                  <span className="font-medium text-deep-dark">实验组：</span>{card.arms}
+                </p>
+                <p className="mt-3 border-t border-border-cream pt-3 text-xs leading-relaxed text-stone-gray">{card.reason}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="mb-8 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-serif text-2xl text-deep-dark">批跑结果总览</h2>
+              <p className="mt-1 text-sm text-stone-gray">
+                读取 `实验结果` 目录中的最近一次 20 题实验 CSV；脚本重跑覆盖文件后，点击刷新即可更新。
+              </p>
+            </div>
+            <button type="button" className="btn-secondary inline-flex items-center gap-2" onClick={loadDashboard} disabled={dashboardLoading}>
+              <RefreshCw size={15} className={dashboardLoading ? 'animate-spin' : ''} />
+              刷新仪表盘
+            </button>
+          </div>
+
+          {!dashboard?.available && (
+            <div className="card p-5">
+              <p className="text-sm text-olive-gray">{dashboard?.message || '暂未读取到批跑结果。'}</p>
+              <p className="mt-2 text-xs text-stone-gray">
+                可在 `backend` 目录运行 `PYTHONPATH=. python ../scripts/run_experiment_batch.py --out-dir "../实验结果/大模型评分"`。
+              </p>
+            </div>
+          )}
+
+          {dashboard?.available && (
+            <>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+                {[
+                  { label: '题目数', value: dashboard.summary.total_questions, icon: FileText },
+                  { label: '实验行数', value: dashboard.summary.total_rows, icon: Database },
+                  { label: '成功率', value: pct(dashboard.summary.success_rate), icon: Activity },
+                  { label: '综合均分', value: fmt(dashboard.summary.avg_composite, 3), icon: Trophy },
+                  { label: '大模型均分', value: dashboard.summary.has_llm_scores ? fmt(dashboard.summary.avg_llm, 2) : '未评分', icon: FlaskConical },
+                ].map((item) => {
+                  const Icon = item.icon
+                  return (
+                    <div key={item.label} className="card p-4">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-stone-gray">{item.label}</span>
+                        <Icon size={16} className="text-terracotta" />
+                      </div>
+                      <p className="mt-2 font-serif text-2xl text-deep-dark">{item.value}</p>
+                    </div>
+                  )
+                })}
+              </div>
+
+              <div className="rounded-lg border border-border-warm bg-ivory px-3 py-2 text-xs text-olive-gray">
+                数据源：{dashboard.source_kind || '—'} · {dashboard.message}
+                {dashboard.meta?.created_at_utc ? ` · 批跑时间：${String(dashboard.meta.created_at_utc).replace('T', ' ').slice(0, 16)}` : ''}
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-3">
+                <div className="card p-4 xl:col-span-2">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-serif text-lg text-deep-dark">三组实验表现</h3>
+                    <div className="flex gap-2 text-xs">
+                      <button
+                        type="button"
+                        onClick={() => setBatchMetric('avg_composite')}
+                        className={batchMetric === 'avg_composite' ? 'btn-primary py-1 px-2' : 'btn-secondary py-1 px-2'}
+                      >
+                        综合分
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setBatchMetric('avg_llm')}
+                        className={batchMetric === 'avg_llm' ? 'btn-primary py-1 px-2' : 'btn-secondary py-1 px-2'}
+                      >
+                        LLM均分
+                      </button>
+                    </div>
+                  </div>
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={expChartData} margin={{ top: 8, right: 8, left: 0, bottom: 42 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e8e6dc" />
+                        <XAxis dataKey="name" tick={{ fill: '#87867f', fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={54} />
+                        <YAxis tick={{ fill: '#87867f', fontSize: 11 }} />
+                        <Tooltip contentStyle={{ background: '#faf9f5', border: '1px solid #f0eee6', borderRadius: 8 }} labelFormatter={(_, p) => (p?.[0]?.payload?.fullLabel as string) || ''} />
+                        <Bar dataKey="value" fill="#c96442" name={batchMetric === 'avg_composite' ? '综合分' : 'LLM均分'} radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="card p-4">
+                  <h3 className="font-serif text-lg text-deep-dark mb-3">AI 实验总结</h3>
+                  <div className="prose-law max-h-72 overflow-y-auto text-sm leading-relaxed text-olive-gray">
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{dashboard.ai_summary || '暂无总结。'}</ReactMarkdown>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-2">
+                <div className="card p-4">
+                  <h3 className="font-serif text-lg text-deep-dark mb-3">题型分组表现</h3>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={blockChartData} margin={{ top: 8, right: 8, left: 0, bottom: 44 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e8e6dc" />
+                        <XAxis dataKey="name" tick={{ fill: '#87867f', fontSize: 10 }} interval={0} angle={-20} textAnchor="end" height={56} />
+                        <YAxis tick={{ fill: '#87867f', fontSize: 11 }} />
+                        <Tooltip contentStyle={{ background: '#faf9f5', border: '1px solid #f0eee6', borderRadius: 8 }} labelFormatter={(_, p) => (p?.[0]?.payload?.fullLabel as string) || ''} />
+                        <Bar dataKey="value" fill="#5e5d59" name={batchMetric === 'avg_composite' ? '综合分' : 'LLM均分'} radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                <div className="card p-4">
+                  <h3 className="font-serif text-lg text-deep-dark mb-1">消融影响</h3>
+                  <p className="mb-3 text-[11px] leading-relaxed text-stone-gray">差值 = 完整系统 - 消融臂；正值越大，说明该模块关闭后综合分下降越明显。</p>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={ablationChartData} margin={{ top: 8, right: 8, left: 0, bottom: 34 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e8e6dc" />
+                        <XAxis dataKey="name" tick={{ fill: '#87867f', fontSize: 11 }} />
+                        <YAxis tick={{ fill: '#87867f', fontSize: 11 }} />
+                        <Tooltip contentStyle={{ background: '#faf9f5', border: '1px solid #f0eee6', borderRadius: 8 }} labelFormatter={(_, p) => (p?.[0]?.payload?.fullLabel as string) || ''} />
+                        <Bar dataKey="value" fill="#b0aea5" name="综合分差值" radius={[6, 6, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-4 xl:grid-cols-3">
+                <div className="card p-4 xl:col-span-1">
+                  <h3 className="font-serif text-lg text-deep-dark mb-3">预设排行榜</h3>
+                  <div className="space-y-2">
+                    {dashboard.preset_summaries.slice(0, 8).map((p, idx) => (
+                      <div key={p.preset_id} className="rounded-lg border border-border-cream bg-ivory px-3 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-medium text-deep-dark">{idx + 1}. {p.label}</span>
+                          {p.is_control && <span className="badge-warm">对照组</span>}
+                        </div>
+                        <p className="mt-1 text-[11px] text-stone-gray">
+                          综合 {fmt(p.avg_composite, 3)} · LLM {fmt(p.avg_llm, 2)} · 引用 {fmt(p.avg_citation_count, 1)} · 延迟 {fmt(p.avg_latency_ms, 0)}ms
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="card p-4 xl:col-span-2">
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="font-serif text-lg text-deep-dark">20 题结果明细</h3>
+                    <div className="flex flex-wrap gap-2 text-xs">
+                      <select className="input py-1 text-xs" value={detailExp} onChange={(e) => setDetailExp(e.target.value)}>
+                        <option value="all">全部实验</option>
+                        {dashboard.exp_summaries.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+                      </select>
+                      <select className="input py-1 text-xs" value={detailBlock} onChange={(e) => setDetailBlock(e.target.value)}>
+                        <option value="all">全部题型</option>
+                        {dashboard.block_summaries.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                  <div className="max-h-[420px] overflow-auto">
+                    <table className="w-full border-collapse text-left text-xs">
+                      <thead className="sticky top-0 bg-ivory">
+                        <tr className="border-b border-border-cream text-stone-gray">
+                          <th className="py-2 pr-2 font-medium">题号</th>
+                          <th className="py-2 pr-2 font-medium">实验</th>
+                          <th className="py-2 pr-2 font-medium">预设</th>
+                          <th className="py-2 pr-2 font-medium">综合</th>
+                          <th className="py-2 pr-2 font-medium">LLM</th>
+                          <th className="py-2 pr-2 font-medium">引用</th>
+                          <th className="py-2 font-medium">状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailRows.map((r, idx) => (
+                          <tr key={`${r.exp}-${r.question_id}-${r.preset_id}-${idx}`} className="border-b border-border-cream/80 odd:bg-parchment/50 text-charcoal">
+                            <td className="py-1.5 pr-2 text-deep-dark">{r.question_id}</td>
+                            <td className="py-1.5 pr-2">{r.exp}</td>
+                            <td className="py-1.5 pr-2 max-w-[180px] truncate" title={r.label}>
+                              {r.is_control && <span className="mr-1 text-terracotta">●</span>}
+                              {r.label}
+                            </td>
+                            <td className="py-1.5 pr-2">{fmt(r.composite_0_1, 3)}</td>
+                            <td className="py-1.5 pr-2">{fmt(r.llm_avg, 2)}</td>
+                            <td className="py-1.5 pr-2">{fmt(r.citation_count, 0)}</td>
+                            <td className="py-1.5">{r.status || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+
         <div className="mb-8 flex items-start gap-3">
           <div className="rounded-lg bg-terracotta/10 p-2.5 text-terracotta">
             <FlaskConical size={22} />
           </div>
           <div>
-            <h1 className="font-serif text-2xl text-deep-dark">实验对照</h1>
+            <h2 className="font-serif text-2xl text-deep-dark">单题即时对照</h2>
             <p className="text-sm text-stone-gray mt-1 max-w-2xl leading-relaxed">
-              并行跑多预设对照，自动保存历史；提供归一化分析、雷达图与综合分柱状图，并给出如何择优的说明。
+              用于临时复查某一道题或某组预设；批量 20 题结果以上方 CSV 仪表盘为准。
             </p>
           </div>
         </div>

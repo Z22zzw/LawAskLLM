@@ -8,6 +8,7 @@ from app.deps import get_current_user
 from app.models.experiment import ExperimentCompareRun
 from app.models.user import User
 from app.schemas.experiments import (
+    BatchDashboardResponse,
     CompareArm,
     CompareRequest,
     CompareResponse,
@@ -15,6 +16,7 @@ from app.schemas.experiments import (
 )
 from app.experiments.analytics import compute_compare_analysis
 from app.experiments.compare import compare_arms_parallel, llm_score_compare_arms
+from app.experiments.dashboard import load_batch_dashboard
 
 router = APIRouter(prefix="/experiments", tags=["实验对照"])
 
@@ -35,6 +37,11 @@ def list_presets(_: User = Depends(get_current_user)):
             for x in EXPERIMENT_MATRIX
         ],
     }
+
+
+@router.get("/batch-dashboard", response_model=BatchDashboardResponse)
+def get_batch_dashboard(_: User = Depends(get_current_user)):
+    return load_batch_dashboard()
 
 
 @router.get("/compare/history", response_model=list[ExperimentHistoryItem])
