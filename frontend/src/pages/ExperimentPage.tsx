@@ -14,7 +14,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { Activity, Clock, Database, FileText, FlaskConical, History, Loader2, RefreshCw, Trophy } from 'lucide-react'
+import { Activity, Clock, Database, FileText, FlaskConical, History, Loader2, RefreshCw, Trophy, X } from 'lucide-react'
 import { api } from '../lib/api'
 import { LEGAL_DOMAINS } from '../types'
 import ReactMarkdown from 'react-markdown'
@@ -139,9 +139,44 @@ interface BatchQuestionResult {
   status: string
   latency_ms?: number | null
   citation_count?: number | null
+  answer_length?: number | null
+  chain_trace_len?: number | null
+  llm_accuracy?: number | null
+  llm_evidence?: number | null
+  llm_explainability?: number | null
+  llm_stability?: number | null
   llm_avg?: number | null
+  llm_note?: string
   composite_0_1?: number | null
+  latency_score_0_1?: number | null
+  citation_score_0_1?: number | null
+  trace_score_0_1?: number | null
+  rank_composite?: number | null
   llm_score_note: string
+}
+
+interface BatchQuestionListItem {
+  question_id: number
+  block: string
+  block_label: string
+  question_text: string
+  question_preview: string
+  avg_composite?: number | null
+  avg_llm?: number | null
+  has_llm_scores: boolean
+  success_rate: number
+}
+
+interface BatchQuestionDetail {
+  available: boolean
+  message: string
+  question_id: number
+  question_text: string
+  block: string
+  block_label: string
+  has_llm_scores: boolean
+  llm_score_notes: string[]
+  arms: BatchQuestionResult[]
 }
 
 interface BatchDashboard {
@@ -156,10 +191,20 @@ interface BatchDashboard {
   preset_summaries: BatchPresetSummary[]
   ablation_deltas: BatchAblationDelta[]
   question_results: BatchQuestionResult[]
+  question_index?: BatchQuestionListItem[]
   ai_summary: string
 }
 
 const RADAR_COLORS = ['#c96442', '#5e5d59', '#b0aea5', '#87867f']
+
+const EXP_TAB_LABELS: Record<string, string> = {
+  A: '实验一 · 基线',
+  B: '实验二 · 数据源策略',
+  C1: '消融 · 关 MMR',
+  C2: '消融 · 关 RRF',
+  C3: '消融 · 关证据标注',
+  C4: '消融 · 关 Agent 回退',
+}
 
 const EXPERIMENT_CARDS = [
   {
@@ -229,6 +274,31 @@ function metricValue(row: BatchMetricSummary | BatchPresetSummary, metric: 'avg_
   return typeof row[metric] === 'number' ? Math.round((row[metric] as number) * 1000) / 1000 : 0
 }
 
+function sortExpKeys(exps: string[]) {
+  const order = ['A', 'B', 'C1', 'C2', 'C3', 'C4']
+  return [...new Set(exps)].sort((a, b) => {
+    const ia = order.indexOf(a)
+    const ib = order.indexOf(b)
+    if (ia === -1 && ib === -1) return a.localeCompare(b)
+    if (ia === -1) return 1
+    if (ib === -1) return -1
+    return ia - ib
+  })
+}
+
+function buildRadarFromBatchArms(arms: BatchQuestionResult[]) {
+  const labels = ['准确性', '证据', '可解释', '稳定']
+  const keys: (keyof BatchQuestionResult)[] = ['llm_accuracy', 'llm_evidence', 'llm_explainability', 'llm_stability']
+  return labels.map((dimension, i) => {
+    const row: Record<string, string | number> = { dimension }
+    arms.forEach((a, j) => {
+      const v = a[keys[i]]
+      row[`arm${j}`] = typeof v === 'number' ? v : 0
+    })
+    return row
+  })
+}
+
 export default function ExperimentPage() {
   const [matrix, setMatrix] = useState<PresetRow[]>([])
   const [selected, setSelected] = useState<Record<string, boolean>>({})
@@ -248,6 +318,10 @@ export default function ExperimentPage() {
   const [batchMetric, setBatchMetric] = useState<'avg_composite' | 'avg_llm'>('avg_composite')
   const [detailExp, setDetailExp] = useState('all')
   const [detailBlock, setDetailBlock] = useState('all')
+  const [questionModalOpen, setQuestionModalOpen] = useState(false)
+  const [questionDetailLoading, setQuestionDetailLoading] = useState(false)
+  const [questionDetail, setQuestionDetail] = useState<BatchQuestionDetail | null>(null)
+  const [detailExpTab, setDetailExpTab] = useState('A')
 
   const loadHistory = useCallback(async () => {
     setHistoryLoading(true)
@@ -272,6 +346,49 @@ export default function ExperimentPage() {
       setDashboardLoading(false)
     }
   }, [])
+
+  const openQuestionDetail = useCallback(async (qid: number) => {
+    setQuestionModalOpen(true)
+    setQuestionDetailLoading(true)
+    setQuestionDetail(null)
+    try {
+      const { data } = await api.get<BatchQuestionDetail>(`/experiments/batch-dashboard/questions/${qid}`)
+      setQuestionDetail(data)
+      if (data.available && data.arms.length > 0) {
+        const exps = sortExpKeys(data.arms.map((a) => a.exp))
+        setDetailExpTab(exps.includes('A') ? 'A' : exps[0])
+      }
+    } catch {
+      setQuestionDetail({ available: false, message: '加载失败', question_id: qid, question_text: '', block: '', block_label: '', has_llm_scores: false, llm_score_notes: [], arms: [] })
+    } finally {
+      setQuestionDetailLoading(false)
+    }
+  }, [])
+
+  const armsForDetailTab = useMemo(() => {
+    if (!questionDetail?.arms) return []
+    return questionDetail.arms.filter((a) => a.exp === detailExpTab)
+  }, [questionDetail, detailExpTab])
+
+  const detailTabRadar = useMemo(() => buildRadarFromBatchArms(armsForDetailTab), [armsForDetailTab])
+
+  const detailTabBarData = useMemo(
+    () =>
+      armsForDetailTab.map((a) => ({
+        name: a.label.length > 12 ? `${a.label.slice(0, 10)}…` : a.label,
+        fullLabel: a.label,
+        composite: typeof a.composite_0_1 === 'number' ? Math.round(a.composite_0_1 * 1000) / 1000 : 0,
+        llm_avg: typeof a.llm_avg === 'number' ? Math.round(a.llm_avg * 100) / 100 : 0,
+        latency_ms: typeof a.latency_ms === 'number' ? a.latency_ms : 0,
+        citation_count: typeof a.citation_count === 'number' ? a.citation_count : 0,
+      })),
+    [armsForDetailTab]
+  )
+
+  const detailExpOptions = useMemo(() => {
+    if (!questionDetail?.arms.length) return []
+    return sortExpKeys(questionDetail.arms.map((a) => a.exp))
+  }, [questionDetail])
 
   useEffect(() => {
     api.get('/experiments/presets').then((r) => {
@@ -481,6 +598,38 @@ export default function ExperimentPage() {
                 {dashboard.meta?.created_at_utc ? ` · 批跑时间：${String(dashboard.meta.created_at_utc).replace('T', ' ').slice(0, 16)}` : ''}
               </div>
 
+              <div className="card p-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-serif text-lg text-deep-dark">20 题问题列表</h3>
+                    <p className="mt-1 text-xs text-stone-gray leading-relaxed">
+                      点击题卡查看本题在全部分组实验下的指标、四维评分与各臂在本轮对照内的排名。
+                    </p>
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  {(dashboard.question_index || []).map((q) => (
+                    <button
+                      key={q.question_id}
+                      type="button"
+                      onClick={() => openQuestionDetail(q.question_id)}
+                      className="rounded-2xl border border-border-cream bg-parchment/80 p-4 text-left transition-colors hover:border-terracotta/40 hover:bg-warm-sand/30 focus:outline-none focus:ring-2 focus:ring-[#3898ec]/80"
+                    >
+                      <div className="mb-2 flex items-center justify-between gap-2">
+                        <span className="badge-warm">{q.block_label}</span>
+                        <span className="text-[11px] text-stone-gray">第 {q.question_id} 题</span>
+                      </div>
+                      <p className="line-clamp-3 text-xs leading-relaxed text-olive-gray">{q.question_preview || q.question_text}</p>
+                      <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 border-t border-border-cream pt-2 text-[11px] text-stone-gray">
+                        <span>综合均值 {fmt(q.avg_composite, 3)}</span>
+                        <span>成功率 {pct(q.success_rate)}</span>
+                        <span>{q.has_llm_scores ? `LLM ${fmt(q.avg_llm, 2)}` : '无四维分'}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="grid gap-4 xl:grid-cols-3">
                 <div className="card p-4 xl:col-span-2">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -604,7 +753,15 @@ export default function ExperimentPage() {
                       <tbody>
                         {detailRows.map((r, idx) => (
                           <tr key={`${r.exp}-${r.question_id}-${r.preset_id}-${idx}`} className="border-b border-border-cream/80 odd:bg-parchment/50 text-charcoal">
-                            <td className="py-1.5 pr-2 text-deep-dark">{r.question_id}</td>
+                            <td className="py-1.5 pr-2 text-deep-dark">
+                              <button
+                                type="button"
+                                className="font-medium text-terracotta underline-offset-2 hover:underline"
+                                onClick={() => openQuestionDetail(r.question_id)}
+                              >
+                                {r.question_id}
+                              </button>
+                            </td>
                             <td className="py-1.5 pr-2">{r.exp}</td>
                             <td className="py-1.5 pr-2 max-w-[180px] truncate" title={r.label}>
                               {r.is_control && <span className="mr-1 text-terracotta">●</span>}
@@ -624,6 +781,165 @@ export default function ExperimentPage() {
             </>
           )}
         </div>
+
+        {questionModalOpen && (
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center bg-deep-dark/45 p-4"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setQuestionModalOpen(false)
+              }
+            }}
+          >
+            <div className="relative max-h-[92vh] w-full max-w-4xl overflow-y-auto rounded-[24px] border border-border-cream bg-ivory p-6 shadow-[rgba(0,0,0,0.05)_0px_4px_24px]">
+              <button
+                type="button"
+                className="absolute right-4 top-4 rounded-lg border border-border-cream bg-parchment p-2 text-olive-gray hover:bg-warm-sand/50 focus:outline-none focus:ring-2 focus:ring-[#3898ec]"
+                onClick={() => setQuestionModalOpen(false)}
+                aria-label="关闭"
+              >
+                <X size={18} />
+              </button>
+              {questionDetailLoading && (
+                <div className="flex items-center gap-2 py-12 text-sm text-olive-gray">
+                  <Loader2 size={18} className="animate-spin text-terracotta" />
+                  加载本题详情…
+                </div>
+              )}
+              {!questionDetailLoading && questionDetail && !questionDetail.available && (
+                <p className="py-8 text-sm text-olive-gray">{questionDetail.message}</p>
+              )}
+              {!questionDetailLoading && questionDetail?.available && (
+                <>
+                  <div className="mb-4 pr-10">
+                    <span className="badge-warm">{questionDetail.block_label}</span>
+                    <h3 className="mt-2 font-serif text-2xl text-deep-dark">第 {questionDetail.question_id} 题</h3>
+                    <p className="mt-3 text-sm leading-relaxed text-olive-gray">{questionDetail.question_text}</p>
+                  </div>
+                  {questionDetail.llm_score_notes.length > 0 && (
+                    <div className="mb-4 rounded-lg border border-border-warm bg-parchment px-3 py-2 text-xs text-stone-gray leading-relaxed">
+                      <span className="font-medium text-deep-dark">评委提示：</span>
+                      {questionDetail.llm_score_notes.join(' · ')}
+                    </div>
+                  )}
+                  <div className="mb-4 flex flex-wrap gap-2">
+                    {detailExpOptions.map((exp) => (
+                      <button
+                        key={exp}
+                        type="button"
+                        className={detailExpTab === exp ? 'btn-primary py-1.5 px-3 text-xs' : 'btn-secondary py-1.5 px-3 text-xs'}
+                        onClick={() => setDetailExpTab(exp)}
+                      >
+                        {EXP_TAB_LABELS[exp] || exp}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mb-4 overflow-x-auto rounded-xl border border-border-cream bg-parchment/60">
+                    <table className="w-full min-w-[720px] border-collapse text-left text-xs">
+                      <thead className="bg-ivory text-stone-gray">
+                        <tr className="border-b border-border-cream">
+                          <th className="py-2 px-2 font-medium">预设</th>
+                          <th className="py-2 px-2 font-medium">综合</th>
+                          <th className="py-2 px-2 font-medium">排名</th>
+                          <th className="py-2 px-2 font-medium">准确性</th>
+                          <th className="py-2 px-2 font-medium">证据</th>
+                          <th className="py-2 px-2 font-medium">可解释</th>
+                          <th className="py-2 px-2 font-medium">稳定</th>
+                          <th className="py-2 px-2 font-medium">延迟</th>
+                          <th className="py-2 px-2 font-medium">引用</th>
+                          <th className="py-2 px-2 font-medium">状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {armsForDetailTab.map((a) => (
+                          <tr key={`${a.exp}-${a.preset_id}`} className="border-b border-border-cream/70 odd:bg-ivory/80 text-charcoal">
+                            <td className="py-2 px-2">
+                              {a.is_control && <span className="mr-1 text-terracotta">●</span>}
+                              <span className="font-medium text-deep-dark">{a.label}</span>
+                              <span className="ml-1 text-[10px] text-stone-gray">({a.group})</span>
+                            </td>
+                            <td className="py-2 px-2">{fmt(a.composite_0_1, 3)}</td>
+                            <td className="py-2 px-2">{a.rank_composite ?? '—'}</td>
+                            <td className="py-2 px-2">{fmt(a.llm_accuracy, 1)}</td>
+                            <td className="py-2 px-2">{fmt(a.llm_evidence, 1)}</td>
+                            <td className="py-2 px-2">{fmt(a.llm_explainability, 1)}</td>
+                            <td className="py-2 px-2">{fmt(a.llm_stability, 1)}</td>
+                            <td className="py-2 px-2">{fmt(a.latency_ms, 0)}</td>
+                            <td className="py-2 px-2">{fmt(a.citation_count, 0)}</td>
+                            <td className="py-2 px-2">{a.status || '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {armsForDetailTab.some((a) => typeof a.llm_note === 'string' && a.llm_note.trim()) && (
+                    <div className="mb-4 space-y-2">
+                      <p className="text-xs font-medium text-deep-dark">各臂简评（评委）</p>
+                      {armsForDetailTab.map((a) =>
+                        a.llm_note && a.llm_note.trim() ? (
+                          <div key={`note-${a.preset_id}`} className="rounded-lg border border-border-cream bg-parchment/80 px-3 py-2 text-[11px] leading-relaxed text-olive-gray">
+                            <span className="font-medium text-deep-dark">{a.label}：</span>
+                            {a.llm_note}
+                          </div>
+                        ) : null,
+                      )}
+                    </div>
+                  )}
+                  <div className="grid gap-4 lg:grid-cols-2">
+                    <div className="card p-4">
+                      <h4 className="font-serif text-base text-deep-dark mb-2">四维雷达（本轮对照内）</h4>
+                      <p className="mb-2 text-[11px] text-stone-gray">缺维按 0 绘制；仅对比当前实验分组下的各预设。</p>
+                      {!questionDetail.has_llm_scores || !armsForDetailTab.some((a) => [a.llm_accuracy, a.llm_evidence, a.llm_explainability, a.llm_stability].some((x) => typeof x === 'number')) ? (
+                        <p className="text-xs text-stone-gray">本题当前分组无有效四维评分。</p>
+                      ) : (
+                        <div className="h-64 w-full">
+                          <ResponsiveContainer width="100%" height="100%">
+                            <RadarChart data={detailTabRadar} cx="50%" cy="50%" outerRadius="78%">
+                              <PolarGrid stroke="#e8e6dc" />
+                              <PolarAngleAxis dataKey="dimension" tick={{ fill: '#5e5d59', fontSize: 11 }} />
+                              <PolarRadiusAxis angle={30} domain={[0, 5]} tick={{ fill: '#87867f', fontSize: 10 }} />
+                              <Tooltip contentStyle={{ background: '#faf9f5', border: '1px solid #f0eee6', borderRadius: 8 }} />
+                              <Legend wrapperStyle={{ fontSize: 11 }} />
+                              {armsForDetailTab.map((a, j) => (
+                                <Radar
+                                  key={a.preset_id}
+                                  name={a.label.length > 10 ? `${a.label.slice(0, 8)}…` : a.label}
+                                  dataKey={`arm${j}`}
+                                  stroke={RADAR_COLORS[j % RADAR_COLORS.length]}
+                                  fill={RADAR_COLORS[j % RADAR_COLORS.length]}
+                                  fillOpacity={0.12}
+                                />
+                              ))}
+                            </RadarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+                    </div>
+                    <div className="card p-4">
+                      <h4 className="font-serif text-base text-deep-dark mb-2">综合分对比</h4>
+                      <div className="h-64 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                          <BarChart data={detailTabBarData} margin={{ top: 8, right: 8, left: 0, bottom: 48 }}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#e8e6dc" />
+                            <XAxis dataKey="name" tick={{ fill: '#87867f', fontSize: 10 }} interval={0} angle={-25} textAnchor="end" height={56} />
+                            <YAxis domain={[0, 1]} tick={{ fill: '#87867f', fontSize: 11 }} />
+                            <Tooltip
+                              contentStyle={{ background: '#faf9f5', border: '1px solid #f0eee6', borderRadius: 8 }}
+                              labelFormatter={(_, p) => (p?.[0]?.payload?.fullLabel as string) || ''}
+                            />
+                            <Bar dataKey="composite" fill="#c96442" name="综合分(0–1)" radius={[6, 6, 0, 0]} />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
 
         <div className="mb-8 flex items-start gap-3">
           <div className="rounded-lg bg-terracotta/10 p-2.5 text-terracotta">

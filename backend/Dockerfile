@@ -10,7 +10,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # 安装后端依赖（RAG 核心已内聚到 backend/app）
 COPY ./backend/requirements.txt /workspace/backend/requirements.txt
 
-RUN pip install --no-cache-dir -r /workspace/backend/requirements.txt
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install --no-cache-dir -r /workspace/backend/requirements.txt
 
 # 复制项目
 COPY . /workspace/

@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from app.experiments.dashboard import load_batch_dashboard
+from app.experiments.dashboard import load_batch_dashboard, load_question_detail
 
 
 class BatchDashboardTest(unittest.TestCase):
@@ -118,6 +118,12 @@ class BatchDashboardTest(unittest.TestCase):
             self.assertEqual(c1_delta.ablation_preset_id, "ablation_no_mmr")
             self.assertAlmostEqual(c1_delta.composite_delta, 0.2)
             self.assertIn("基线对比", dashboard.ai_summary)
+            self.assertEqual(len(dashboard.question_index), 2)
+
+            d1 = load_question_detail(1, root)
+            self.assertTrue(d1.available)
+            self.assertEqual(len(d1.arms), 2)
+            self.assertEqual(d1.arms[0].exp, "A")
 
     def test_returns_unavailable_when_csv_missing(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -15,6 +16,8 @@ from app.schemas.experiments import (
     BatchDashboardSummary,
     BatchMetricSummary,
     BatchPresetSummary,
+    BatchQuestionDetailResponse,
+    BatchQuestionListItem,
     BatchQuestionResult,
 )
 
@@ -76,6 +79,68 @@ def _has_llm(row: dict[str, str]) -> bool:
         if _to_float(row.get(k)) is not None:
             return True
     return False
+
+
+def _optional_int(row: dict[str, str], key: str) -> Optional[int]:
+    raw = row.get(key)
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        return int(float(raw))
+    except ValueError:
+        return None
+
+
+def parse_questions_md(project_root: Path) -> dict[int, tuple[str, str]]:
+    """解析题单 Markdown，返回 question_id -> (block, full_text)。"""
+    path = project_root / "实验题单_20题_小样本.md"
+    if not path.exists():
+        return {}
+    out: dict[int, tuple[str, str]] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^(\d+)\.\s+(.+)$", line.strip())
+        if not m:
+            continue
+        qid = int(m.group(1))
+        text = m.group(2).strip()
+        if qid <= 8:
+            block = "A_concept"
+        elif qid <= 16:
+            block = "B_case"
+        else:
+            block = "C_boundary"
+        out[qid] = (block, text)
+    return out
+
+
+def _row_to_batch_question_result(row: dict[str, str]) -> BatchQuestionResult:
+    return BatchQuestionResult(
+        exp=str(row.get("exp") or ""),
+        question_id=_to_int(row.get("question_id")),
+        block=str(row.get("block") or ""),
+        question_preview=str(row.get("question_preview") or ""),
+        preset_id=str(row.get("preset_id") or ""),
+        label=str(row.get("label") or row.get("preset_id") or ""),
+        group=str(row.get("group") or ""),
+        is_control=str(row.get("is_control") or "") == "1" or row.get("preset_id") == "system_full",
+        status=str(row.get("status") or ""),
+        latency_ms=_to_float(row.get("latency_ms")),
+        citation_count=_to_float(row.get("citation_count")),
+        answer_length=_to_float(row.get("answer_length")),
+        chain_trace_len=_to_float(row.get("chain_trace_len")),
+        llm_accuracy=_to_float(row.get("llm_accuracy")),
+        llm_evidence=_to_float(row.get("llm_evidence")),
+        llm_explainability=_to_float(row.get("llm_explainability")),
+        llm_stability=_to_float(row.get("llm_stability")),
+        llm_avg=_to_float(row.get("llm_avg")),
+        llm_note=str(row.get("llm_note") or ""),
+        composite_0_1=_to_float(row.get("composite_0_1")),
+        latency_score_0_1=_to_float(row.get("latency_score_0_1")),
+        citation_score_0_1=_to_float(row.get("citation_score_0_1")),
+        trace_score_0_1=_to_float(row.get("trace_score_0_1")),
+        rank_composite=_optional_int(row, "rank_composite"),
+        llm_score_note=str(row.get("llm_score_note") or ""),
+    )
 
 
 def _read_csv(path: Path) -> list[dict[str, str]]:
@@ -218,27 +283,90 @@ def _ablation_deltas(rows: list[dict[str, str]]) -> list[BatchAblationDelta]:
 
 
 def _question_results(rows: list[dict[str, str]]) -> list[BatchQuestionResult]:
-    out: list[BatchQuestionResult] = []
+    out = [_row_to_batch_question_result(row) for row in rows]
+    return sorted(out, key=lambda x: (x.question_id, x.exp, 0 if x.is_control else 1, x.preset_id))
+
+
+def _build_question_index(rows: list[dict[str, str]], catalog: dict[int, tuple[str, str]]) -> list[BatchQuestionListItem]:
+    by_q: dict[int, list[dict[str, str]]] = defaultdict(list)
     for row in rows:
-        out.append(
-            BatchQuestionResult(
-                exp=str(row.get("exp") or ""),
-                question_id=_to_int(row.get("question_id")),
-                block=str(row.get("block") or ""),
-                question_preview=str(row.get("question_preview") or ""),
-                preset_id=str(row.get("preset_id") or ""),
-                label=str(row.get("label") or row.get("preset_id") or ""),
-                group=str(row.get("group") or ""),
-                is_control=str(row.get("is_control") or "") == "1" or row.get("preset_id") == "system_full",
-                status=str(row.get("status") or ""),
-                latency_ms=_to_float(row.get("latency_ms")),
-                citation_count=_to_float(row.get("citation_count")),
-                llm_avg=_to_float(row.get("llm_avg")),
-                composite_0_1=_to_float(row.get("composite_0_1")),
-                llm_score_note=str(row.get("llm_score_note") or ""),
+        qid = _to_int(row.get("question_id"))
+        if qid > 0:
+            by_q[qid].append(row)
+
+    items: list[BatchQuestionListItem] = []
+    for qid in sorted(by_q.keys()):
+        qrows = by_q[qid]
+        block = str(qrows[0].get("block") or "")
+        qtext = ""
+        if qid in catalog:
+            block, qtext = catalog[qid]
+        else:
+            qtext = str(qrows[0].get("question_preview") or "")
+        preview = str(qrows[0].get("question_preview") or qtext)
+        if len(preview) > 160:
+            preview = preview[:160] + "…"
+        items.append(
+            BatchQuestionListItem(
+                question_id=qid,
+                block=block,
+                block_label=BLOCK_LABELS.get(block, block),
+                question_text=qtext or preview,
+                question_preview=preview,
+                avg_composite=_round(_avg(_to_float(r.get("composite_0_1")) for r in qrows)),
+                avg_llm=_round(_avg(_to_float(r.get("llm_avg")) for r in qrows)),
+                has_llm_scores=any(_has_llm(r) for r in qrows),
+                success_rate=_round(sum(1 for r in qrows if _is_success(r)) / len(qrows), 4) or 0.0,
             )
         )
-    return sorted(out, key=lambda x: (x.question_id, x.exp, 0 if x.is_control else 1, x.preset_id))
+    return items
+
+
+def load_question_detail(question_id: int, project_root: Optional[Path] = None) -> BatchQuestionDetailResponse:
+    root = project_root or config.PROJECT_ROOT
+    try:
+        _, _, rows, meta = _choose_source(root)
+    except FileNotFoundError:
+        return BatchQuestionDetailResponse(
+            available=False,
+            message="未找到批跑 CSV。请先运行 scripts/run_experiment_batch.py。",
+            question_id=question_id,
+        )
+
+    catalog = parse_questions_md(root)
+    qrows = [r for r in rows if _to_int(r.get("question_id")) == question_id]
+    if not qrows:
+        return BatchQuestionDetailResponse(
+            available=False,
+            message=f"题号 {question_id} 在当前 CSV 中无记录。",
+            question_id=question_id,
+        )
+
+    block = str(qrows[0].get("block") or "")
+    qtext = ""
+    if question_id in catalog:
+        block, qtext = catalog[question_id]
+    else:
+        qtext = str(qrows[0].get("question_preview") or "")
+
+    arms = [
+        _row_to_batch_question_result(r)
+        for r in sorted(qrows, key=lambda x: (str(x.get("exp") or ""), 0 if x.get("preset_id") == "system_full" else 1, str(x.get("preset_id") or "")))
+    ]
+    notes = sorted({str(r.get("llm_score_note") or "").strip() for r in qrows if str(r.get("llm_score_note") or "").strip()})
+
+    return BatchQuestionDetailResponse(
+        available=True,
+        message="",
+        question_id=question_id,
+        question_text=qtext,
+        block=block,
+        block_label=BLOCK_LABELS.get(block, block),
+        has_llm_scores=any(_has_llm(r) for r in qrows),
+        llm_score_notes=notes,
+        meta=meta,
+        arms=arms,
+    )
 
 
 def _build_ai_summary(resp: BatchDashboardResponse) -> str:
@@ -278,6 +406,8 @@ def load_batch_dashboard(project_root: Optional[Path] = None) -> BatchDashboardR
             message="未找到批跑 CSV。请先运行 scripts/run_experiment_batch.py，并将结果输出到 实验结果/大模型评分 或 实验结果/大模型不评分。",
         )
 
+    catalog = parse_questions_md(root)
+
     success_rows = sum(1 for row in rows if _is_success(row))
     total_rows = len(rows)
     summary = BatchDashboardSummary(
@@ -303,6 +433,7 @@ def load_batch_dashboard(project_root: Optional[Path] = None) -> BatchDashboardR
         preset_summaries=_preset_rows(rows),
         ablation_deltas=_ablation_deltas(rows),
         question_results=_question_results(rows),
+        question_index=_build_question_index(rows, catalog),
     )
     resp.ai_summary = _build_ai_summary(resp)
     if source_kind == "大模型评分" and not summary.has_llm_scores:

@@ -127,9 +127,45 @@ class BatchQuestionResult(BaseModel):
     status: str = ""
     latency_ms: Optional[float] = None
     citation_count: Optional[float] = None
+    answer_length: Optional[float] = None
+    chain_trace_len: Optional[float] = None
+    llm_accuracy: Optional[float] = None
+    llm_evidence: Optional[float] = None
+    llm_explainability: Optional[float] = None
+    llm_stability: Optional[float] = None
     llm_avg: Optional[float] = None
+    llm_note: str = ""
     composite_0_1: Optional[float] = None
+    latency_score_0_1: Optional[float] = None
+    citation_score_0_1: Optional[float] = None
+    trace_score_0_1: Optional[float] = None
+    rank_composite: Optional[int] = None
     llm_score_note: str = ""
+
+
+class BatchQuestionListItem(BaseModel):
+    question_id: int
+    block: str
+    block_label: str = ""
+    question_text: str = ""
+    question_preview: str = ""
+    avg_composite: Optional[float] = None
+    avg_llm: Optional[float] = None
+    has_llm_scores: bool = False
+    success_rate: float = 0.0
+
+
+class BatchQuestionDetailResponse(BaseModel):
+    available: bool
+    message: str = ""
+    question_id: int = 0
+    question_text: str = ""
+    block: str = ""
+    block_label: str = ""
+    has_llm_scores: bool = False
+    llm_score_notes: list[str] = Field(default_factory=list)
+    meta: dict[str, Any] = Field(default_factory=dict)
+    arms: list[BatchQuestionResult] = Field(default_factory=list)
 
 
 class BatchDashboardResponse(BaseModel):
@@ -144,4 +180,5 @@ class BatchDashboardResponse(BaseModel):
     preset_summaries: list[BatchPresetSummary] = Field(default_factory=list)
     ablation_deltas: list[BatchAblationDelta] = Field(default_factory=list)
     question_results: list[BatchQuestionResult] = Field(default_factory=list)
+    question_index: list[BatchQuestionListItem] = Field(default_factory=list)
     ai_summary: str = ""

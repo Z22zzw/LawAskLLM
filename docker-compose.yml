@@ -36,6 +36,7 @@ services:
       - ./data:/workspace/data
       - ./uploads:/workspace/uploads
       - ./历史聊天信息存储:/workspace/历史聊天信息存储
+      - ./实验结果:/workspace/实验结果
     depends_on:
       mysql:
         condition: service_healthy
